@@ -11,6 +11,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/catalog"
 	"github.com/libredmm/librefanza/backend/internal/database"
 	"github.com/libredmm/librefanza/backend/internal/ingest"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
 	"github.com/libredmm/librefanza/backend/internal/settings"
 	"github.com/libredmm/librefanza/backend/internal/sources"
 	"github.com/libredmm/librefanza/backend/internal/tasks"
@@ -46,6 +47,7 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	var manager *tasks.Manager
 	search := func(ctx context.Context, id string) (bool, error) {
 		pattern := os.Getenv("BLACKHOLE_PATTERN")
 		if pattern != "" {
@@ -65,9 +67,10 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 		if err != nil {
 			return false, err
 		}
-		return sources.Search(ctx, id, providers, ingest.NewService(db))
+		return sources.Search(ctx, id, providers, ingest.NewService(db), func(source string, err error) {
+			manager.RecordSourceFailure(ctx, source, err)
+		})
 	}
-	var manager *tasks.Manager
 	err = database.WithInstallationLock(ctx, db, db.Dialector.Name(), func() error {
 		var err error
 		manager, err = tasks.NewManager(db, search)
@@ -100,6 +103,17 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 			return errors.New("invalid maintenance task")
 		}
 	}
+	manager.ConfigureCrawls(func(ctx context.Context, request sources.CrawlRequest, progress sources.CrawlProgress, save func(sources.CrawlProgress) error) error {
+		cfg, err := settings.NewService(db).Sources(ctx)
+		if err != nil {
+			return err
+		}
+		source, err := sources.NewCrawlSource(cfg, request.Source)
+		if err != nil {
+			return err
+		}
+		return sources.RunCrawl(ctx, request, source, ingest.NewService(db), progress, save)
+	})
 	if err := manager.ConfigureMaintenance(func(ctx context.Context) (tasks.ScheduleSettings, error) {
 		return settings.NewService(db).Schedules(ctx)
 	}, map[string]func(context.Context) error{
@@ -120,8 +134,30 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 func (r *Runner) Run() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	logs := logbook.New(nil, os.Stdout)
+	lastError := ""
+	var nextCleanup time.Time
 	for {
-		_, _ = r.Manager(r.ctx)
+		manager, err := r.Manager(r.ctx)
+		if err != nil && r.ctx.Err() == nil && !errors.Is(err, database.ErrNotInstalled) {
+			if err.Error() != lastError {
+				logs.Record(r.ctx, logbook.Entry{Level: "error", Event: "worker_start_failed", Reason: "unknown"})
+				lastError = err.Error()
+			}
+		} else if err == nil {
+			if lastError != "" {
+				logs.Record(r.ctx, logbook.Entry{Level: "info", Event: "worker_started"})
+				lastError = ""
+			}
+			if time.Now().After(nextCleanup) {
+				cleanup, cancel := context.WithTimeout(r.ctx, 15*time.Second)
+				if err := manager.CleanLogs(cleanup); err != nil {
+					logs.Record(r.ctx, logbook.Entry{Level: "error", Event: "log_cleanup_failed", Reason: "storage"})
+				}
+				cancel()
+				nextCleanup = time.Now().Add(24 * time.Hour)
+			}
+		}
 		select {
 		case <-r.ctx.Done():
 			return

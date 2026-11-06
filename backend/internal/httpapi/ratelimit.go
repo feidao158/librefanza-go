@@ -20,7 +20,7 @@ func rateLimit() gin.HandlerFunc {
 	clients := map[string]*clientLimit{}
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		protected := c.Request.Method == http.MethodPost && (strings.HasPrefix(path, "/api/v1/setup/") || path == "/api/v1/users" || path == "/api/v1/auth/sessions" || path == "/api/v1/search-jobs" || strings.HasPrefix(path, "/api/v1/auth/password-reset"))
+		protected := c.Request.Method == http.MethodPost && (strings.HasPrefix(path, "/api/v1/setup/") || path == "/api/v1/users" || path == "/api/v1/auth/sessions" || path == "/api/v1/search-jobs" || strings.HasPrefix(path, "/api/v1/auth/password-reset")) || c.Request.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/movies/") && strings.HasSuffix(path, "/playbacks")
 		if !protected {
 			c.Next()
 			return

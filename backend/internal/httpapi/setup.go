@@ -86,6 +86,7 @@ func NewRouter(service *setup.Service, providers ...*database.Provider) *gin.Eng
 	if len(providers) > 0 {
 		registerAuthRoutes(api, providers[0])
 		registerCatalogRoutes(api, providers[0], cache.NewManager(providers[0]))
+		registerPlaybackRoutes(api, providers[0])
 		registerSettingsRoutes(api, providers[0])
 		registerAdminRoutes(api, providers[0])
 	}

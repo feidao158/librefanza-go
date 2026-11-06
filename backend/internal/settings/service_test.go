@@ -29,14 +29,14 @@ func TestSourceSettingsPreserveSecrets(t *testing.T) {
 	}
 	service := NewService(db)
 	defer db.Exec("DELETE FROM settings WHERE name = ?", "sources")
-	if err := service.UpdateSources(context.Background(), sources.ClientSettings{FanzaAPIID: "secret-api", FanzaAffiliateID: "secret-affiliate"}); err != nil {
+	if err := service.UpdateSources(context.Background(), sources.ClientSettings{FanzaAPIID: "secret-api", FanzaAffiliateID: "secret-affiliate", JableCookie: "session=secret-jable", JavLibraryCookie: "session=secret-library"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.UpdateSources(context.Background(), sources.ClientSettings{FC2URL: "https://example.com/"}); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := service.Sources(context.Background())
-	if err != nil || stored.FanzaAPIID != "secret-api" || stored.FanzaAffiliateID != "secret-affiliate" || stored.FC2URL != "https://example.com/" {
+	if err != nil || stored.FanzaAPIID != "secret-api" || stored.FanzaAffiliateID != "secret-affiliate" || stored.FC2URL != "https://example.com/" || stored.JableCookie != "session=secret-jable" || stored.JavLibraryCookie != "session=secret-library" {
 		t.Fatalf("settings not preserved: %v", err)
 	}
 	if err := service.UpdateSources(context.Background(), sources.ClientSettings{ProxyURL: "http://localhost:8080"}); err != nil {
@@ -48,6 +48,13 @@ func TestSourceSettingsPreserveSecrets(t *testing.T) {
 	stored, err = service.Sources(context.Background())
 	if err != nil || stored.ProxyURL != "" {
 		t.Fatalf("proxy not cleared: %v", err)
+	}
+	if err := service.UpdateSources(context.Background(), sources.ClientSettings{ClearJableCookie: true, ClearJavLibraryCookie: true}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = service.Sources(context.Background())
+	if err != nil || stored.JableCookie != "" || stored.JavLibraryCookie != "" {
+		t.Fatal("来源会话未清除")
 	}
 }
 

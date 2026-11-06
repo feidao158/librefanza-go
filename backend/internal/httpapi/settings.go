@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/libredmm/librefanza/backend/internal/config"
@@ -35,7 +36,7 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			respondError(c, http.StatusInternalServerError, "settings_unavailable")
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": gin.H{"fanza_configured": value.FanzaAPIID != "" && value.FanzaAffiliateID != "", "proxy_configured": value.ProxyURL != "", "fc2_url": value.FC2URL, "sod_url": value.SODURL, "mgstage_url": value.MGStageURL, "mgstage_series_url": value.MGStageSeriesURL}})
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"fanza_configured": value.FanzaAPIID != "" && value.FanzaAffiliateID != "", "proxy_configured": value.ProxyURL != "", "fc2_url": value.FC2URL, "sod_url": value.SODURL, "mgstage_url": value.MGStageURL, "mgstage_series_url": value.MGStageSeriesURL, "jable_url": value.JableURL, "avmoo_url": value.AVMOOURL, "javlibrary_url": value.JavLibraryURL, "libredmm_url": value.LibreDMMURL, "jable_cookie_configured": value.JableCookie != "", "javlibrary_cookie_configured": value.JavLibraryCookie != ""}})
 	})
 	api.PUT("/admin/settings/sources", func(c *gin.Context) {
 		svc := service(c)
@@ -123,6 +124,23 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": true}})
+	})
+	api.GET("/admin/schedule-previews", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		settings, err := svc.Schedules(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "settings_unavailable")
+			return
+		}
+		next, err := tasks.NextSchedules(settings, time.Now())
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "settings_unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": next})
 	})
 	api.GET("/admin/settings/smtp", func(c *gin.Context) {
 		svc := service(c)

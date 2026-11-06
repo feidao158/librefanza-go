@@ -73,6 +73,17 @@ func (s *Service) UpdateSources(ctx context.Context, input sources.ClientSetting
 		input.ProxyURL = previous.ProxyURL
 	}
 	input.ClearProxy = false
+	if input.ClearJableCookie {
+		input.JableCookie = ""
+	} else if input.JableCookie == "" {
+		input.JableCookie = previous.JableCookie
+	}
+	if input.ClearJavLibraryCookie {
+		input.JavLibraryCookie = ""
+	} else if input.JavLibraryCookie == "" {
+		input.JavLibraryCookie = previous.JavLibraryCookie
+	}
+	input.ClearJableCookie, input.ClearJavLibraryCookie = false, false
 	if _, err := sources.NewProviders(input); err != nil {
 		return err
 	}

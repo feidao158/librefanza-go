@@ -15,7 +15,7 @@ type Sink interface {
 	Save(context.Context, Parsed) error
 }
 
-func Search(ctx context.Context, keyword string, providers []Provider, sink Sink) (bool, error) {
+func Search(ctx context.Context, keyword string, providers []Provider, sink Sink, observers ...func(string, error)) (bool, error) {
 	for _, char := range keyword {
 		if char > 127 {
 			return false, errors.New("keyword must be ASCII")
@@ -30,6 +30,11 @@ func Search(ctx context.Context, keyword string, providers []Provider, sink Sink
 		items, err := provider.Search(ctx, id)
 		if err != nil {
 			failures = append(failures, err)
+			if named, ok := provider.(interface{ SourceName() string }); ok {
+				for _, observe := range observers {
+					observe(named.SourceName(), err)
+				}
+			}
 			continue
 		}
 		found := false

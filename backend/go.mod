@@ -3,6 +3,7 @@ module github.com/libredmm/librefanza/backend
 go 1.27.0
 
 require (
+	github.com/Eyevinn/hls-m3u8 v0.6.5
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/getkin/kin-openapi v0.152.0
 	github.com/gin-gonic/gin v1.12.0

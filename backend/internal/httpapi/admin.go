@@ -16,7 +16,10 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/catalog"
 	"github.com/libredmm/librefanza/backend/internal/database"
 	"github.com/libredmm/librefanza/backend/internal/ingest"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
+	"github.com/libredmm/librefanza/backend/internal/settings"
 	"github.com/libredmm/librefanza/backend/internal/sources"
+	"github.com/libredmm/librefanza/backend/internal/tasks"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +44,19 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		return db.WithContext(c.Request.Context())
 	}
+	api.GET("/admin/logs", func(c *gin.Context) {
+		db := databaseForAdmin(c)
+		if db == nil {
+			return
+		}
+		page, size := pageParams(c)
+		entries, total, err := logbook.List(c.Request.Context(), db, logbook.Filter{Level: c.Query("level"), Source: c.Query("source"), TaskID: c.Query("task_id"), Page: page, PageSize: size})
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": entries, "meta": gin.H{"page": page, "page_size": size, "total": total}})
+	})
 	api.GET("/admin/jobs", func(c *gin.Context) {
 		db := databaseForAdmin(c)
 		if db == nil {
@@ -48,6 +64,9 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		page, size := pageParams(c)
 		query := db.Model(&jobs.Job{})
+		if c.Query("kind") == "collection" {
+			query = query.Where("type IN ?", []string{"source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl"})
+		}
 		if status := c.Query("status"); status != "" {
 			query = query.Where("status = ?", status)
 		}
@@ -58,8 +77,38 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			return
 		}
 		result := make([]gin.H, 0, len(entries))
+		ids := make([]string, 0, len(entries))
 		for _, entry := range entries {
-			result = append(result, gin.H{"id": entry.ID.String(), "type": entry.Type, "status": entry.Status, "attempt": entry.Attempt, "created_at": entry.CreatedAt, "started_at": entry.StartedAt, "completed_at": entry.CompletedAt})
+			if entry.Type == "source_crawl" {
+				ids = append(ids, entry.ID.String())
+			}
+		}
+		progress := make(map[string]tasks.CrawlProgress, len(ids))
+		if len(ids) > 0 {
+			var rows []tasks.CrawlProgress
+			if err := db.Where("job_id IN ?", ids).Find(&rows).Error; err != nil {
+				respondError(c, http.StatusInternalServerError, "internal_error")
+				return
+			}
+			for _, row := range rows {
+				progress[row.JobID] = row
+			}
+		}
+		for _, entry := range entries {
+			value := gin.H{"id": entry.ID.String(), "type": entry.Type, "status": entry.Status, "attempt": entry.Attempt, "created_at": entry.CreatedAt, "started_at": entry.StartedAt, "completed_at": entry.CompletedAt}
+			if entry.Type == "source_crawl" {
+				var request sources.CrawlRequest
+				if json.Unmarshal(entry.Args, &request) == nil {
+					value["crawl"] = request
+				}
+				if row, ok := progress[entry.ID.String()]; ok {
+					value["progress"] = row
+				}
+				if entry.LastError != "" {
+					value["error_code"] = crawlErrorCode(entry.LastError)
+				}
+			}
+			result = append(result, value)
 		}
 		c.JSON(http.StatusOK, gin.H{"data": result, "meta": gin.H{"page": page, "page_size": size, "total": total}})
 	})
@@ -217,6 +266,38 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		var err error
 		if item.Source == "fanza" {
 			parsed, err = sources.ParseFanza([]byte(item.RawJSON))
+		} else if item.Source == "avmoo" || item.Source == "libredmm" {
+			parsed, err = sources.ParseRemoteJSON(item.Source, item.SourceURL, []byte(item.RawJSON))
+		} else if item.Source == "jable" {
+			cfg, loadErr := settings.NewService(db).Sources(c.Request.Context())
+			if loadErr != nil {
+				err = loadErr
+			} else {
+				var body []byte
+				var address string
+				body, address, err = sources.FetchJablePage(c.Request.Context(), cfg, item.NormalizedID)
+				if err == nil {
+					parsed, err = sources.ParsePage("jable", address, body)
+				}
+			}
+		} else if item.Source == "javlibrary" && item.SourcePageID == nil {
+			cfg, loadErr := settings.NewService(db).Sources(c.Request.Context())
+			if loadErr != nil {
+				err = loadErr
+			} else {
+				var source sources.CrawlSource
+				source, err = sources.NewCrawlSource(cfg, "javlibrary")
+				if err == nil {
+					var items []sources.Parsed
+					items, err = source.Search(c.Request.Context(), item.NormalizedID)
+					if err == nil && len(items) == 0 {
+						err = errors.New("source item missing")
+					}
+					if err == nil {
+						parsed = items[0]
+					}
+				}
+			}
 		} else if item.SourcePageID != nil {
 			var entry adminPage
 			if err = db.Table("source_pages").First(&entry, *item.SourcePageID).Error; err == nil {
@@ -298,6 +379,19 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": true}})
 	})
+}
+
+func crawlErrorCode(value string) string {
+	switch {
+	case strings.Contains(value, "source returned HTTP 403"), strings.Contains(value, "source requires verification"):
+		return "source_access_denied"
+	case strings.Contains(value, "source request failed"):
+		return "source_unavailable"
+	case strings.Contains(value, "invalid source"):
+		return "source_response_invalid"
+	default:
+		return "crawl_failed"
+	}
 }
 
 func validPublicSourceURL(value string) bool {

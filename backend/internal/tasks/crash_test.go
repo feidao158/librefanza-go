@@ -15,6 +15,7 @@ import (
 	jobs "github.com/jdziat/simple-durable-jobs/v4"
 	"github.com/libredmm/librefanza/backend/internal/config"
 	"github.com/libredmm/librefanza/backend/internal/database"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
 )
 
 func TestCrashWorkerProcess(t *testing.T) {
@@ -64,6 +65,7 @@ func TestCrashWorkerProcess(t *testing.T) {
 	}
 	defer db.Exec("DELETE FROM search_cooldowns WHERE normalized_id = ?", id)
 	defer db.Where("id = ?", jobID).Delete(&jobs.Job{})
+	defer db.Where("task_id = ?", jobID).Delete(&logbook.Entry{})
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -114,5 +116,21 @@ func TestCrashWorkerProcess(t *testing.T) {
 	waitCompleted(t, manager, jobID)
 	if recovered.Load() != 1 {
 		t.Fatalf("进程退出后的恢复次数 = %d", recovered.Load())
+	}
+	var entries []logbook.Entry
+	if err := db.Where("task_id = ?", jobID).Order("id ASC").Find(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+	starts, completed := 0, false
+	for _, entry := range entries {
+		if entry.Event == "task_started" {
+			starts++
+		}
+		if entry.Event == "task_completed" {
+			completed = true
+		}
+	}
+	if starts < 2 || !completed {
+		t.Fatalf("异常退出恢复后的日志不完整：%+v", entries)
 	}
 }

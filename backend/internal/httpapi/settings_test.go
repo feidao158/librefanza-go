@@ -48,7 +48,7 @@ func TestAdminSourceSettingsDoNotExposeSecrets(t *testing.T) {
 	}
 	defer db.Exec("DELETE FROM settings WHERE name = ?", "sources")
 	router := NewRouter(setup.NewService(store, setupBackend{}), provider)
-	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings/sources", bytes.NewBufferString(`{"fanza_api_id":"sensitive-id","fanza_affiliate_id":"sensitive-affiliate"}`))
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings/sources", bytes.NewBufferString(`{"fanza_api_id":"sensitive-id","fanza_affiliate_id":"sensitive-affiliate","jable_cookie":"session=sensitive-jable","javlibrary_cookie":"session=sensitive-library"}`))
 	request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -59,7 +59,7 @@ func TestAdminSourceSettingsDoNotExposeSecrets(t *testing.T) {
 	read.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, read)
-	if response.Code != http.StatusOK || bytes.Contains(response.Body.Bytes(), []byte("sensitive")) {
+	if response.Code != http.StatusOK || bytes.Contains(response.Body.Bytes(), []byte("sensitive")) || !bytes.Contains(response.Body.Bytes(), []byte(`"jable_cookie_configured":true`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"javlibrary_cookie_configured":true`)) {
 		t.Fatalf("read: %d %s", response.Code, response.Body.String())
 	}
 }

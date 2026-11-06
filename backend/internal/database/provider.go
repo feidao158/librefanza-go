@@ -15,6 +15,8 @@ type Provider struct {
 	db    *gorm.DB
 }
 
+var ErrNotInstalled = errors.New("application is not installed")
+
 func NewProvider(store *config.Store) *Provider { return &Provider{store: store} }
 
 func (p *Provider) Database(ctx context.Context) (*gorm.DB, error) {
@@ -28,7 +30,7 @@ func (p *Provider) Database(ctx context.Context) (*gorm.DB, error) {
 		return nil, err
 	}
 	if !found || !cfg.Installed {
-		return nil, errors.New("application is not installed")
+		return nil, ErrNotInstalled
 	}
 	p.db, err = Open(ctx, cfg.Database)
 	if err == nil {

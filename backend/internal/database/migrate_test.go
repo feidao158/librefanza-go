@@ -30,14 +30,14 @@ func TestMigrationsAgainstDatabase(t *testing.T) {
 		}
 	}
 	if driver == "mysql" {
-		if err := db.Exec("DELETE FROM goose_db_version WHERE version_id = ?", 2).Error; err != nil {
+		if err := db.Exec("DELETE FROM goose_db_version WHERE version_id IN ?", []int{2, 3}).Error; err != nil {
 			t.Fatal(err)
 		}
 		if err := Migrate(context.Background(), db, driver); err != nil {
 			t.Fatalf("migration did not recover after the index was created: %v", err)
 		}
 	}
-	for _, name := range []string{"users", "api_sessions", "movies", "actresses", "source_items", "source_pages", "movie_cast", "settings", "search_cooldowns"} {
+	for _, name := range []string{"users", "api_sessions", "movies", "actresses", "source_items", "source_pages", "movie_cast", "settings", "search_cooldowns", "source_crawl_progress", "application_logs"} {
 		if !db.Migrator().HasTable(name) {
 			t.Fatalf("missing table %s", name)
 		}

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/libredmm/librefanza/backend/internal/auth"
 	"github.com/libredmm/librefanza/backend/internal/database"
+	"github.com/libredmm/librefanza/backend/internal/sources"
 	"github.com/libredmm/librefanza/backend/internal/tasks"
 )
 
@@ -83,6 +84,38 @@ func RegisterTaskRoutes(router *gin.Engine, provider *database.Provider, taskSer
 		id, err := svc.EnqueueMaintenance(c.Request.Context(), input.Type)
 		if err != nil {
 			respondError(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"data": gin.H{"id": id}})
+	})
+	api.POST("/admin/crawl-jobs", func(c *gin.Context) {
+		if !requireAdmin(c, provider) {
+			return
+		}
+		var request sources.CrawlRequest
+		if c.ShouldBindJSON(&request) != nil || request.Validate() != nil {
+			respondError(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		service, err := taskService(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "tasks_unavailable")
+			return
+		}
+		crawler, ok := service.(interface {
+			EnqueueCrawl(context.Context, sources.CrawlRequest) (string, error)
+		})
+		if !ok {
+			respondError(c, http.StatusServiceUnavailable, "tasks_unavailable")
+			return
+		}
+		id, err := crawler.EnqueueCrawl(c.Request.Context(), request)
+		if errors.Is(err, tasks.ErrCrawlInProgress) {
+			respondError(c, http.StatusConflict, "crawl_in_progress")
+			return
+		}
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "task_create_failed")
 			return
 		}
 		c.JSON(http.StatusAccepted, gin.H{"data": gin.H{"id": id}})

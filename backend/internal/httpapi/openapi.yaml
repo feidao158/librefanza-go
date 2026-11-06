@@ -350,12 +350,24 @@ paths:
       tags: [管理]
       summary: 读取脱敏来源配置
       security: [{ bearerAuth: [] }]
-      responses: { '200': { description: 来源配置 } }
+      responses:
+        '200':
+          description: 脱敏来源配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SourceSettingsView' }
     put:
       tags: [管理]
       summary: 更新来源配置，空密钥保留原值
       security: [{ bearerAuth: [] }]
-      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceSettingsInput' }
       responses: { '200': { description: 更新成功 } }
   /admin/settings/redis:
     get:
@@ -484,6 +496,85 @@ paths:
               properties:
                 type: { type: string, enum: [actress_crawl, fanza_crawl, mgstage_crawl, rebuild_movies] }
       responses: { '202': { description: 返回任务编号 } }
+  /movies/{id}/playbacks:
+    get:
+      tags: [影片]
+      summary: 按番号查找可用的站内播放来源
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '200': { description: 可用播放来源及短期有效地址 }
+        '404': { description: 影片不存在或已隐藏 }
+        '502': { description: 来源不可访问 }
+  /playback/relay/{token}:
+    get:
+      tags: [影片]
+      summary: 转发经签名授权的媒体播放资源
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - { name: Range, in: header, required: false, schema: { type: string } }
+      responses:
+        '200': { description: 媒体资源或播放列表 }
+        '206': { description: 媒体字节范围 }
+        '403': { description: 令牌失效 }
+        '502': { description: 媒体资源不可访问 }
+  /admin/schedule-previews:
+    get:
+      tags: [管理]
+      summary: 获取已保存计划的下次执行时间
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 按来源返回下次执行时间 } }
+  /admin/crawl-jobs:
+    post:
+      tags: [管理]
+      summary: 手动创建来源采集任务
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, mode]
+              properties:
+                source: { type: string, enum: [jable, avmoo, javlibrary, libredmm] }
+                mode: { type: string, enum: [incremental, full, pages, dates, ids] }
+                start_page: { type: integer, minimum: 1 }
+                end_page: { type: integer, minimum: 1 }
+                start_date: { type: string, format: date }
+                end_date: { type: string, format: date }
+                prefix: { type: string }
+                start_number: { type: integer, minimum: 0 }
+                end_number: { type: integer, minimum: 0 }
+                number_width: { type: integer, minimum: 0, maximum: 10 }
+      responses:
+        '202': { description: 返回任务编号 }
+        '400': { description: 参数错误 }
+        '409': { description: 同一来源已有不同的采集任务 }
+  /admin/logs:
+    get:
+      tags: [管理]
+      summary: 查看运行日志
+      description: 仅管理员可访问，默认保留最近 30 天的任务运行日志。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: level, in: query, schema: { type: string, enum: [info, warn, error] } }
+        - { name: source, in: query, schema: { type: string, enum: [fanza, sod, mgstage, fc2, jable, avmoo, javlibrary, libredmm] } }
+        - { name: task_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 按记录编号倒序排列的日志
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ApplicationLog' } }
+                  meta: { $ref: '#/components/schemas/Pagination' }
+        '401': { description: 未登录 }
+        '403': { description: 无管理员权限 }
+        '503': { description: 数据库不可用 }
   /admin/jobs:
     get:
       tags: [管理]
@@ -531,6 +622,56 @@ components:
         application/json:
           schema: { type: object, additionalProperties: true }
   schemas:
+    ApplicationLog:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        level: { type: string, enum: [info, warn, error] }
+        event: { type: string, description: 日志事件类型 }
+        source: { type: string, description: 来源名称，空字符串表示无来源 }
+        task_type: { type: string }
+        task_id: { type: string, description: 任务编号，空字符串表示无任务 }
+        attempt: { type: integer, description: 执行次数，从 1 开始 }
+        reason: { type: string, description: 经安全分类的错误原因 }
+        http_status: { type: integer, description: 来源 HTTP 状态码，0 表示无状态码 }
+        stage: { type: string, description: 采集失败阶段 }
+        position_type: { type: string, description: 采集位置类型，page 或 number }
+        position: { type: integer, description: 采集页码或编号 }
+    SourceSettingsView:
+      type: object
+      properties:
+        fanza_configured: { type: boolean }
+        proxy_configured: { type: boolean }
+        fc2_url: { type: string }
+        sod_url: { type: string }
+        mgstage_url: { type: string }
+        mgstage_series_url: { type: string }
+        jable_url: { type: string }
+        avmoo_url: { type: string }
+        javlibrary_url: { type: string }
+        libredmm_url: { type: string }
+        jable_cookie_configured: { type: boolean }
+        javlibrary_cookie_configured: { type: boolean }
+    SourceSettingsInput:
+      type: object
+      properties:
+        fanza_api_id: { type: string, format: password }
+        fanza_affiliate_id: { type: string, format: password }
+        proxy_url: { type: string, format: password }
+        clear_proxy: { type: boolean }
+        fc2_url: { type: string }
+        sod_url: { type: string }
+        mgstage_url: { type: string }
+        mgstage_series_url: { type: string }
+        jable_url: { type: string }
+        avmoo_url: { type: string }
+        javlibrary_url: { type: string }
+        libredmm_url: { type: string }
+        jable_cookie: { type: string, format: password }
+        javlibrary_cookie: { type: string, format: password }
+        clear_jable_cookie: { type: boolean }
+        clear_javlibrary_cookie: { type: boolean }
     User:
       type: object
       properties:

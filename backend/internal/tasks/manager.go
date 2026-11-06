@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"os"
 	"sync"
 	"time"
 
 	jobs "github.com/jdziat/simple-durable-jobs/v4"
 	"github.com/libredmm/librefanza/backend/internal/catalog"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -48,6 +49,7 @@ type Manager struct {
 	storage *jobs.GormStorage
 	queue   *jobs.Queue
 	worker  *jobs.Worker
+	logs    *logbook.Recorder
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -63,26 +65,30 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 		return nil, err
 	}
 	queue := jobs.New(storage)
+	manager := &Manager{db: db, storage: storage, queue: queue, logs: logbook.New(db, os.Stdout)}
+	queue.UseExecutionMiddleware(manager.logExecution)
 	queue.Register("movie_search", func(ctx context.Context, args SearchArgs) (Result, error) {
-		if !args.Force {
-			var previous cooldown
-			err := db.WithContext(ctx).Where("normalized_id = ?", args.ID).First(&previous).Error
-			if err == nil && previous.SearchedAt.After(time.Now().UTC().Add(-24*time.Hour)) {
-				return Result{Cached: true}, nil
+		return protectTask(func() (Result, error) {
+			if !args.Force {
+				var previous cooldown
+				err := db.WithContext(ctx).Where("normalized_id = ?", args.ID).First(&previous).Error
+				if err == nil && previous.SearchedAt.After(time.Now().UTC().Add(-24*time.Hour)) {
+					return Result{Cached: true}, nil
+				}
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return Result{}, err
+				}
 			}
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			found, err := search(ctx, args.ID)
+			if err != nil {
 				return Result{}, err
 			}
-		}
-		found, err := search(ctx, args.ID)
-		if err != nil {
-			return Result{}, err
-		}
-		entry := cooldown{NormalizedID: args.ID, SearchedAt: time.Now().UTC()}
-		if err := db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "normalized_id"}}, DoUpdates: clause.AssignmentColumns([]string{"searched_at"})}).Create(&entry).Error; err != nil {
-			return Result{}, err
-		}
-		return Result{Found: found}, nil
+			entry := cooldown{NormalizedID: args.ID, SearchedAt: time.Now().UTC()}
+			if err := db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "normalized_id"}}, DoUpdates: clause.AssignmentColumns([]string{"searched_at"})}).Create(&entry).Error; err != nil {
+				return Result{}, err
+			}
+			return Result{Found: found}, nil
+		})
 	})
 	options := []jobs.WorkerOption{
 		jobs.WorkerQueue("default", jobs.Concurrency(4)),
@@ -93,7 +99,8 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 		jobs.WithStaleLockAge(2 * time.Minute),
 	}
 	worker := jobs.NewWorker(queue, append(options, overrides...)...)
-	return &Manager{db: db, storage: storage, queue: queue, worker: worker}, nil
+	manager.worker = worker
+	return manager, nil
 }
 
 func (m *Manager) Start(parent context.Context) error {
@@ -109,7 +116,7 @@ func (m *Manager) Start(parent context.Context) error {
 	go func() {
 		defer close(done)
 		if err := m.worker.Start(ctx); err != nil && ctx.Err() == nil {
-			log.Print("后台任务处理器意外停止")
+			m.logs.Record(ctx, logbook.Entry{Level: "error", Event: "worker_stopped", Reason: "unknown"})
 		}
 	}()
 	return nil

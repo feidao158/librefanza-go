@@ -123,7 +123,7 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return Parsed{}, errors.New("invalid source URL")
 	}
-	if len(body) == 0 || bytes.Contains(bytes.ToLower(body), []byte("challenge-form")) || bytes.Contains(bytes.ToLower(body), []byte("access denied")) {
+	if len(body) == 0 || isSourceChallenge(body) {
 		return Parsed{}, errors.New("invalid source page")
 	}
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
@@ -211,6 +211,16 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 		item.ThumbnailImageURL = attributeURL(doc, base, ".items_article_MainitemThumb img", "src")
 		item.ReleaseDate = parseDate(text(doc, "div.items_article_Releasedate"))
 		metadata.Labels = texts(doc, ".items_article_TagArea a.tag")
+	case "jable":
+		item.NormalizedID = catalog.NormalizeProductID(path.Base(strings.TrimRight(base.Path, "/")))
+		item.Title = text(doc, "h4")
+		if item.Title == "" {
+			item.Title, _ = doc.Find(`meta[property="og:title"]`).Attr("content")
+			item.Title = strings.TrimSpace(item.Title)
+		}
+		item.CoverImageURL = attributeURL(doc, base, `meta[property="og:image"]`, "content")
+		item.ThumbnailImageURL = item.CoverImageURL
+		metadata.Cast = cast(doc, `a[href*="/models/"]`)
 	default:
 		return Parsed{}, errors.New("unsupported source")
 	}
@@ -221,7 +231,11 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 	item.ExternalID = hex.EncodeToString(key[:])
 	encoded, _ := json.Marshal(metadata)
 	item.MetadataJSON = string(encoded)
-	return Parsed{Item: item, Cast: metadata.Cast, RawHTML: string(body)}, nil
+	rawHTML := string(body)
+	if source == "jable" {
+		rawHTML = ""
+	}
+	return Parsed{Item: item, Cast: metadata.Cast, RawHTML: rawHTML}, nil
 }
 
 func names(values []namedValue) []string {

@@ -14,18 +14,27 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/libredmm/librefanza/backend/internal/catalog"
+	"golang.org/x/time/rate"
 )
 
 type ClientSettings struct {
-	FanzaURL         string `json:"fanza_url"`
-	FanzaAPIID       string `json:"fanza_api_id"`
-	FanzaAffiliateID string `json:"fanza_affiliate_id"`
-	SODURL           string `json:"sod_url"`
-	MGStageURL       string `json:"mgstage_url"`
-	MGStageSeriesURL string `json:"mgstage_series_url"`
-	FC2URL           string `json:"fc2_url"`
-	ProxyURL         string `json:"proxy_url"`
-	ClearProxy       bool   `json:"clear_proxy,omitempty"`
+	FanzaURL              string `json:"fanza_url"`
+	FanzaAPIID            string `json:"fanza_api_id"`
+	FanzaAffiliateID      string `json:"fanza_affiliate_id"`
+	SODURL                string `json:"sod_url"`
+	MGStageURL            string `json:"mgstage_url"`
+	MGStageSeriesURL      string `json:"mgstage_series_url"`
+	FC2URL                string `json:"fc2_url"`
+	JableURL              string `json:"jable_url"`
+	AVMOOURL              string `json:"avmoo_url"`
+	JavLibraryURL         string `json:"javlibrary_url"`
+	LibreDMMURL           string `json:"libredmm_url"`
+	JableCookie           string `json:"jable_cookie"`
+	JavLibraryCookie      string `json:"javlibrary_cookie"`
+	ClearJableCookie      bool   `json:"clear_jable_cookie,omitempty"`
+	ClearJavLibraryCookie bool   `json:"clear_javlibrary_cookie,omitempty"`
+	ProxyURL              string `json:"proxy_url"`
+	ClearProxy            bool   `json:"clear_proxy,omitempty"`
 }
 
 type httpProvider struct {
@@ -33,14 +42,26 @@ type httpProvider struct {
 	base     *url.URL
 	client   *http.Client
 	settings ClientSettings
+	limiter  *rate.Limiter
 }
 
+func (p *httpProvider) SourceName() string { return p.kind }
+
 func NewProviders(settings ClientSettings) ([]Provider, error) {
+	for _, value := range []string{settings.JableCookie, settings.JavLibraryCookie} {
+		if len(value) > 8192 || strings.ContainsAny(value, "\r\n") {
+			return nil, errors.New("invalid source session")
+		}
+	}
 	defaults := []struct{ kind, value, fallback string }{
 		{"fanza", settings.FanzaURL, "https://api.dmm.com/affiliate/v3/"},
 		{"sod", settings.SODURL, "https://ec.sod.co.jp/"},
 		{"mgstage", settings.MGStageURL, "https://www.mgstage.com/"},
 		{"fc2", settings.FC2URL, "https://adult.contents.fc2.com/"},
+		{"javlibrary", settings.JavLibraryURL, "https://www.javlibrary.com/"},
+		{"avmoo", settings.AVMOOURL, "https://avmoo.shop/"},
+		{"jable", settings.JableURL, "https://jable.tv/"},
+		{"libredmm", settings.LibreDMMURL, "https://www.libredmm.com/"},
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if settings.ProxyURL != "" {
@@ -66,16 +87,23 @@ func NewProviders(settings ClientSettings) ([]Provider, error) {
 		if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 			return nil, fmt.Errorf("invalid %s URL", entry.kind)
 		}
+		if (entry.kind == "jable" || entry.kind == "avmoo" || entry.kind == "javlibrary" || entry.kind == "libredmm") && (base.User != nil || base.RawQuery != "" || base.Fragment != "") {
+			return nil, fmt.Errorf("invalid %s URL", entry.kind)
+		}
 		if !strings.HasSuffix(base.Path, "/") {
 			base.Path += "/"
 		}
-		providers = append(providers, &httpProvider{kind: entry.kind, base: base, client: client, settings: settings})
+		provider := &httpProvider{kind: entry.kind, base: base, client: client, settings: settings}
+		if entry.kind == "jable" || entry.kind == "javlibrary" || entry.kind == "avmoo" || entry.kind == "libredmm" {
+			provider.limiter = rate.NewLimiter(rate.Every(500*time.Millisecond), 1)
+		}
+		providers = append(providers, provider)
 	}
 	return providers, nil
 }
 
 func (p *httpProvider) Search(ctx context.Context, id string) ([]Parsed, error) {
-	if strings.HasPrefix(id, "FC2-") && p.kind != "fc2" || !strings.HasPrefix(id, "FC2-") && p.kind == "fc2" {
+	if strings.HasPrefix(id, "FC2-") && (p.kind == "fanza" || p.kind == "sod" || p.kind == "mgstage") || !strings.HasPrefix(id, "FC2-") && p.kind == "fc2" {
 		return nil, nil
 	}
 	switch p.kind {
@@ -87,6 +115,14 @@ func (p *httpProvider) Search(ctx context.Context, id string) ([]Parsed, error) 
 		return p.searchMGStage(ctx, id)
 	case "fc2":
 		return p.searchFC2(ctx, id)
+	case "libredmm":
+		return p.searchLibreDMM(ctx, id)
+	case "avmoo":
+		return p.searchAVMOO(ctx, id)
+	case "javlibrary":
+		return p.searchJavLibrary(ctx, id)
+	case "jable":
+		return p.searchJable(ctx, id)
 	default:
 		return nil, errors.New("unsupported source")
 	}
@@ -323,6 +359,11 @@ func (p *httpProvider) searchFC2(ctx context.Context, id string) ([]Parsed, erro
 }
 
 func (p *httpProvider) get(ctx context.Context, target string, headers http.Header) ([]byte, int, error) {
+	if p.limiter != nil {
+		if err := p.limiter.Wait(ctx); err != nil {
+			return nil, 0, err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, 0, errors.New("invalid source request")
@@ -330,13 +371,19 @@ func (p *httpProvider) get(ctx context.Context, target string, headers http.Head
 	if headers != nil {
 		req.Header = headers.Clone()
 	}
+	if p.kind == "jable" && p.settings.JableCookie != "" {
+		req.Header.Set("Cookie", p.settings.JableCookie)
+	}
+	if p.kind == "javlibrary" && p.settings.JavLibraryCookie != "" {
+		req.Header.Set("Cookie", p.settings.JavLibraryCookie)
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, 0, errors.New("source request failed")
+		return nil, 0, requestError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("source returned HTTP %d", resp.StatusCode)
+		return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 	if err != nil || len(body) > 8<<20 {

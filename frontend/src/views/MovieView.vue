@@ -5,6 +5,7 @@ import { ArrowLeft, Check, Copy, ExternalLink, RefreshCw, Search } from 'lucide-
 import { api, ApiError, jsonBody } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import type { Movie, MovieMetadata } from '../types'
+import MoviePlayer from '../components/MoviePlayer.vue'
 
 interface Job { id: string; status: string; result?: { found: boolean; cached: boolean } }
 
@@ -109,6 +110,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
       </div>
       <div v-if="auth.user?.is_admin" class="admin-inline"><button class="btn btn-outline btn-sm" :disabled="searching" @click="search(true)"><RefreshCw :size="15" />{{ $t('movies.reSearch') }}</button><label class="cover-editor"><span>{{ $t('movies.cover') }}</span><input v-model="cover" class="input input-sm" type="url"><button class="btn btn-sm" @click="saveCover">{{ $t('common.save') }}</button></label></div>
       <p v-if="error" class="error-text">{{ $t('common.error') }}</p>
+      <MoviePlayer :id="movie.normalized_id" />
       <section v-if="metadata.cast?.length" class="detail-section"><h3>{{ $t('movies.cast') }}</h3><div class="cast-list"><RouterLink v-for="person in metadata.cast" :key="person.name" :to="{ name: 'actress-by-name', params: { name: person.name } }">{{ person.name }}</RouterLink></div></section>
       <section v-if="activeItem.description" class="detail-section"><h3>{{ $t('movies.description') }}</h3><p class="description">{{ activeItem.description }}</p></section>
       <section v-if="metadata.sample_image_urls?.length" class="detail-section"><h3>{{ $t('movies.samples') }}</h3><div class="sample-grid"><a v-for="(image, index) in metadata.sample_image_urls" :key="image" :href="image" target="_blank" rel="noopener noreferrer"><img :src="image" :alt="`${movie.normalized_id} ${index + 1}`" loading="lazy" referrerpolicy="no-referrer"></a></div></section>
