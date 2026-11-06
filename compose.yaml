@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"
     environment:
       LIBREFANZA_INSECURE_COOKIES: ${LIBREFANZA_INSECURE_COOKIES:-false}
       LIBREFANZA_TRUSTED_PROXIES: ${LIBREFANZA_TRUSTED_PROXIES:-}
