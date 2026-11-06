@@ -1,34 +1,52 @@
 services:
-  web:
-    image: ghcr.io/libredmm/librefanza:latest
-    env_file:
-      - .env
-      - .env.production
-    restart: always
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - 3000:3000
+      - "127.0.0.1:8080:8080"
     environment:
-      REDIS_URL: redis://redis:6379/
-    depends_on:
-      - redis
-    command: bundle exec puma -w 2
-  sidekiq:
-    image: ghcr.io/libredmm/librefanza:latest
-    env_file:
-      - .env
-      - .env.production
-    restart: always
-    environment:
-      REDIS_URL: redis://redis:6379/
-    depends_on:
-      - redis
-    command: bundle exec sidekiq
-  redis:
-    image: redis:7
-    restart: always
-    command: redis-server --appendonly yes
+      LIBREFANZA_INSECURE_COOKIES: ${LIBREFANZA_INSECURE_COOKIES:-false}
+      LIBREFANZA_TRUSTED_PROXIES: ${LIBREFANZA_TRUSTED_PROXIES:-}
+      FANZA_API_ID: ${FANZA_API_ID:-}
+      FANZA_AFFILIATE_ID: ${FANZA_AFFILIATE_ID:-}
+      PROXY_URL: ${PROXY_URL:-}
+      FC2_BASE_URL: ${FC2_BASE_URL:-}
+      MGSTAGE_SERIES_URL: ${MGSTAGE_SERIES_URL:-}
+      BLACKHOLE_PATTERN: ${BLACKHOLE_PATTERN:-}
     volumes:
-      - redis-data:/data
+      - app-data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    profiles: [postgres]
+    environment:
+      POSTGRES_DB: ${DB_NAME:-librefanza}
+      POSTGRES_USER: ${DB_USER:-librefanza}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    profiles: [mysql]
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-librefanza}
+      MYSQL_USER: ${DB_USER:-librefanza}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-${DB_PASSWORD}}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    profiles: [redis]
+    restart: unless-stopped
 
 volumes:
-  redis-data:
+  app-data:
+  postgres-data:
+  mysql-data:

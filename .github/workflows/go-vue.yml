@@ -1,0 +1,92 @@
+name: Go 和 Vue 验证
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: integration-test-only
+          POSTGRES_DB: librefanza_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U test -d librefanza_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: librefanza_test
+          MYSQL_USER: test
+          MYSQL_PASSWORD: integration-test-only
+          MYSQL_ROOT_PASSWORD: integration-root-only
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pintegration-root-only --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: PostgreSQL 集成测试
+        working-directory: backend
+        env:
+          LIBREFANZA_TEST_DB_DRIVER: postgres
+          LIBREFANZA_TEST_DB_PORT: '5432'
+          LIBREFANZA_TEST_REDIS_PORT: '6379'
+        run: go test -p 1 ./... -count=1
+      - name: MySQL 集成测试
+        working-directory: backend
+        env:
+          LIBREFANZA_TEST_DB_DRIVER: mysql
+          LIBREFANZA_TEST_DB_PORT: '3306'
+          LIBREFANZA_TEST_REDIS_PORT: '6379'
+        run: go test -p 1 ./... -count=1
+      - name: Go 静态检查
+        working-directory: backend
+        run: go vet ./...
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: 前端单元测试与构建
+        working-directory: frontend
+        run: |
+          npm test
+          npm run build
+      - name: 安装浏览器
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: 浏览器测试
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:4173
+        run: |
+          npm run dev -- --port 4173 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for i in $(seq 1 30); do curl --silent --fail http://127.0.0.1:4173 >/dev/null && break; sleep 1; done
+          npm run test:e2e

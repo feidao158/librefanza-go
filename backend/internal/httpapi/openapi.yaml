@@ -1,0 +1,641 @@
+openapi: 3.0.3
+info:
+  title: LibreFanza API
+  version: 1.0.0
+  description: |
+    影片、演员、采集任务和管理接口。JSON 成功响应使用 data 字段，列表额外包含 meta。
+    错误响应格式为 {"error":{"code":"错误代码"}}，空响应使用 204。
+    浏览器通过安全 Cookie 保存刷新令牌；移动端登录时指定 client 为 mobile，
+    使用返回的 refresh_token 轮换令牌并保存在设备安全存储中。
+servers:
+  - url: /api/v1
+tags:
+  - name: 安装
+  - name: 认证
+  - name: 影片与演员
+  - name: 管理
+paths:
+  /openapi.yaml:
+    get:
+      tags: [安装]
+      summary: 获取 OpenAPI 文档
+      responses:
+        '200': { description: OpenAPI YAML }
+  /setup:
+    get:
+      tags: [安装]
+      summary: 获取安装状态
+      responses:
+        '200':
+          description: 返回 data.installed
+  /setup/database-checks:
+    post:
+      tags: [安装]
+      summary: 测试未安装数据库连接
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Database' }
+      responses:
+        '200': { description: 连接成功 }
+        '409': { description: 已安装 }
+  /setup/redis-checks:
+    post:
+      tags: [安装]
+      summary: 测试可选 Redis 连接
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Redis' }
+      responses:
+        '200': { description: 连接成功 }
+  /setup/installations:
+    post:
+      tags: [安装]
+      summary: 初始化数据库和管理员
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [database, email, password]
+              properties:
+                database: { $ref: '#/components/schemas/Database' }
+                redis: { $ref: '#/components/schemas/Redis' }
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '201': { description: 安装完成 }
+        '409': { description: 已安装或与恢复中的配置不一致 }
+  /users:
+    post:
+      tags: [认证]
+      summary: 注册用户
+      requestBody: { $ref: '#/components/requestBodies/Credentials' }
+      responses:
+        '201':
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+  /auth/sessions:
+    post:
+      tags: [认证]
+      summary: 登录，client 为 web 或 mobile
+      requestBody: { $ref: '#/components/requestBodies/Credentials' }
+      responses:
+        '201': { $ref: '#/components/responses/Tokens' }
+        '401': { description: 认证失败 }
+  /auth/refresh:
+    post:
+      tags: [认证]
+      summary: 轮换访问令牌和刷新令牌
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string, description: 移动端刷新令牌；浏览器使用 Cookie }
+      responses:
+        '200': { $ref: '#/components/responses/Tokens' }
+        '401': { description: 刷新令牌无效或过期 }
+  /auth/me:
+    get:
+      tags: [认证]
+      summary: 获取当前用户
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { description: 未登录 }
+  /auth/sessions/current:
+    delete:
+      tags: [认证]
+      summary: 注销当前会话
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: 注销成功 }
+  /auth/password-reset-requests:
+    post:
+      tags: [认证]
+      summary: 申请密码重置邮件
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '202': { description: 请求已受理 }
+        '503': { description: 邮件功能未配置 }
+  /auth/password-resets:
+    post:
+      tags: [认证]
+      summary: 使用一次性令牌重置密码
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        '204': { description: 密码已更新 }
+  /product-ids/normalize:
+    get:
+      tags: [影片与演员]
+      summary: 检查并规范化影片番号
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 返回 data.valid 和 data.normalized }
+  /movies:
+    get:
+      tags: [影片与演员]
+      summary: 分页查询影片
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: match, in: query, schema: { type: string, enum: [fuzzy, prefix] } }
+        - { name: order, in: query, schema: { type: string, enum: [title, release_date, date_added] } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 影片列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Movie' } }
+                  meta: { $ref: '#/components/schemas/Pagination' }
+  /movies/{id}:
+    get:
+      tags: [影片与演员]
+      summary: 查询影片详情和来源版本
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '200':
+          description: 影片详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Movie' }
+        '404': { description: 未找到或已隐藏 }
+  /source-items/{id}:
+    get:
+      tags: [影片与演员]
+      summary: 查询影片的指定来源版本
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '200':
+          description: 来源版本
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SourceItem' }
+        '404': { description: 未找到或关联影片已隐藏 }
+  /source-items/{id}/images/{variant}:
+    get:
+      tags: [影片与演员]
+      summary: 获取 SOD 来源的封面或缩略图
+      parameters:
+        - { $ref: '#/components/parameters/ID' }
+        - { name: variant, in: path, required: true, schema: { type: string, enum: [cover, thumbnail] } }
+      responses:
+        '200': { description: 图片内容 }
+        '404': { description: 未找到或关联影片已隐藏 }
+        '502': { description: 来源图片不可用 }
+  /actress-filmographies:
+    get:
+      tags: [影片与演员]
+      summary: 根据演员姓名查询作品，允许演员资料尚未收录
+      parameters:
+        - { name: name, in: query, required: true, schema: { type: string } }
+        - { name: solo, in: query, schema: { type: boolean } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 演员资料及影片列表；未收录资料时演员 ID 为 0
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      actress: { $ref: '#/components/schemas/Actress' }
+                      movies: { type: array, items: { $ref: '#/components/schemas/Movie' } }
+                  meta: { $ref: '#/components/schemas/Pagination' }
+        '404': { description: 演员已隐藏 }
+  /actresses:
+    get:
+      tags: [影片与演员]
+      summary: 分页查询演员
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: order, in: query, schema: { type: string, enum: [new, name] } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 演员列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Actress' } }
+                  meta: { $ref: '#/components/schemas/Pagination' }
+  /actresses/{id}:
+    get:
+      tags: [影片与演员]
+      summary: 查询演员详情
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '200':
+          description: 演员详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Actress' }
+        '404': { description: 未找到或已隐藏 }
+  /actresses/{id}/movies:
+    get:
+      tags: [影片与演员]
+      summary: 查询演员作品
+      parameters:
+        - { $ref: '#/components/parameters/ID' }
+        - { name: solo, in: query, schema: { type: boolean } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 影片列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Movie' } }
+                  meta: { $ref: '#/components/schemas/Pagination' }
+  /search-jobs:
+    post:
+      tags: [影片与演员]
+      summary: 提交番号检索，强制检索需要管理员令牌
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string }
+                force: { type: boolean, default: false }
+      responses:
+        '202':
+          description: 返回任务编号，普通检索在一天内复用冷却结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/JobID' }
+        '400': { description: 番号无效 }
+        '401': { description: 强制检索未提供管理员令牌 }
+        '403': { description: 强制检索需要管理员权限 }
+  /search-jobs/{id}:
+    get:
+      tags: [影片与演员]
+      summary: 查询检索任务状态
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '200':
+          description: 检索任务状态与完成结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SearchJob' }
+        '404': { description: 任务不存在 }
+  /admin/settings/sources:
+    get:
+      tags: [管理]
+      summary: 读取脱敏来源配置
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 来源配置 } }
+    put:
+      tags: [管理]
+      summary: 更新来源配置，空密钥保留原值
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/settings/redis:
+    get:
+      tags: [管理]
+      summary: 读取脱敏 Redis 配置
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Redis 配置 } }
+    put:
+      tags: [管理]
+      summary: 启用、停用或更新 Redis
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Redis' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/settings/redis-checks:
+    post:
+      tags: [管理]
+      summary: 测试 Redis 连接
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Redis' }
+      responses: { '200': { description: 连接成功 } }
+  /admin/settings/schedules:
+    get:
+      tags: [管理]
+      summary: 获取定时任务配置
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 时区与 Cron 配置 } }
+    put:
+      tags: [管理]
+      summary: 更新定时任务配置
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/settings/smtp:
+    get:
+      tags: [管理]
+      summary: 获取脱敏 SMTP 配置
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: SMTP 配置 } }
+    put:
+      tags: [管理]
+      summary: 更新 SMTP 配置
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/source-items:
+    get:
+      tags: [管理]
+      summary: 分页查询来源条目
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 来源条目列表 } }
+  /admin/source-items/{id}:
+    patch:
+      tags: [管理]
+      summary: 修改 Fanza 来源优先级
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/source-items/{id}/raw:
+    get:
+      tags: [管理]
+      summary: 获取脱敏 Fanza 原始 JSON
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses: { '200': { description: 原始 JSON } }
+  /admin/source-items/{id}/rederivations:
+    post:
+      tags: [管理]
+      summary: 重新解析来源条目
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses: { '200': { description: 解析成功 } }
+  /admin/source-pages:
+    get:
+      tags: [管理]
+      summary: 查询来源页面
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 页面列表 } }
+    post:
+      tags: [管理]
+      summary: 导入来源页面
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '201': { description: 导入成功 } }
+  /admin/source-pages/{id}:
+    get:
+      tags: [管理]
+      summary: 安全读取原始页面内容
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses: { '200': { description: JSON 格式原始内容 } }
+  /admin/movies/{id}:
+    patch:
+      tags: [管理]
+      summary: 修改影片封面或隐藏状态
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/actresses/{id}:
+    patch:
+      tags: [管理]
+      summary: 修改演员隐藏状态
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/maintenance-jobs:
+    post:
+      tags: [管理]
+      summary: 手动执行采集或重建影片数据
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [actress_crawl, fanza_crawl, mgstage_crawl, rebuild_movies] }
+      responses: { '202': { description: 返回任务编号 } }
+  /admin/jobs:
+    get:
+      tags: [管理]
+      summary: 查看任务状态
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 任务列表 } }
+  /admin/jobs/{id}/retries:
+    post:
+      tags: [管理]
+      summary: 重试失败任务
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses: { '202': { description: 已重新排队 } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Tokens:
+      description: 访问令牌及用户信息；移动端包含刷新令牌，浏览器通过 Cookie 接收刷新令牌
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: '#/components/schemas/Tokens' }
+  parameters:
+    ID: { name: id, in: path, required: true, schema: { type: string } }
+    Page: { name: page, in: query, schema: { type: integer, default: 1, minimum: 1 } }
+    PageSize: { name: page_size, in: query, schema: { type: integer, default: 30, minimum: 1, maximum: 100 } }
+  requestBodies:
+    Credentials:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email, password]
+            properties:
+              email: { type: string, format: email }
+              password: { type: string, format: password }
+              client: { type: string, enum: [web, mobile] }
+    Settings:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: true }
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string, format: email }
+        is_admin: { type: boolean }
+        created_at: { type: string, format: date-time }
+    Tokens:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string, description: 仅移动端返回 }
+        expires_in: { type: integer, description: 访问令牌有效期，单位为秒 }
+        user: { $ref: '#/components/schemas/User' }
+    JobID:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+    SearchJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, running, retrying, waiting, paused, completed, failed, cancelled] }
+        result:
+          type: object
+          properties:
+            found: { type: boolean, description: 当前是否存在可公开查看的影片 }
+            cached: { type: boolean, description: 在冷却期内跳过了来源检索 }
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer, format: int64 }
+    Movie:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        normalized_id: { type: string }
+        compressed_id: { type: string }
+        release_date: { type: string, format: date-time, nullable: true }
+        cover_image_url: { type: string }
+        is_hidden: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        preferred_item: { $ref: '#/components/schemas/SourceItem' }
+        versions: { type: array, items: { $ref: '#/components/schemas/SourceItem' } }
+    SourceItem:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        source: { type: string, enum: [fanza, sod, mgstage, javlibrary, fc2] }
+        external_id: { type: string }
+        normalized_id: { type: string }
+        priority: { type: integer }
+        title: { type: string }
+        release_date: { type: string, format: date-time, nullable: true }
+        description: { type: string }
+        source_url: { type: string }
+        cover_image_url: { type: string }
+        thumbnail_image_url: { type: string }
+        metadata: { $ref: '#/components/schemas/MovieMetadata' }
+    MovieMetadata:
+      type: object
+      properties:
+        cast:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              fanza_id: { type: integer, format: int64 }
+        genres: { type: array, items: { type: string } }
+        labels: { type: array, items: { type: string } }
+        makers: { type: array, items: { type: string } }
+        directors: { type: array, items: { type: string } }
+        sample_image_urls: { type: array, items: { type: string } }
+        volume_minutes: { type: integer }
+        rating: { type: number }
+    Actress:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        fanza_id: { type: integer, format: int64, nullable: true }
+        name: { type: string }
+        image_url: { type: string }
+        is_hidden: { type: boolean }
+    Database:
+      type: object
+      required: [driver, host, port, name, user]
+      properties:
+        driver: { type: string, enum: [mysql, postgres] }
+        host: { type: string }
+        port: { type: integer }
+        name: { type: string }
+        user: { type: string }
+        password: { type: string, format: password }
+        tls: { type: boolean }
+    Redis:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        address: { type: string }
+        username: { type: string }
+        password: { type: string, format: password }
+        clear_password: { type: boolean, description: 清除已保存的 Redis 密码 }
+        database: { type: integer, minimum: 0 }
+        tls: { type: boolean }

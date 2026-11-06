@@ -1,0 +1,44 @@
+package database
+
+import (
+	"testing"
+
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5"
+	"github.com/libredmm/librefanza/backend/internal/config"
+)
+
+func TestConnectionStringEscapesCredentials(t *testing.T) {
+	for _, driver := range []string{"mysql", "postgres"} {
+		t.Run(driver, func(t *testing.T) {
+			cfg := config.Database{Driver: driver, Host: "127.0.0.1", Port: 1234, Name: "librefanza", User: "app", Password: "a:/@?+% !"}
+			dsn, err := ConnectionString(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if driver == "mysql" {
+				parsed, err := mysql.ParseDSN(dsn)
+				if err != nil || parsed.Passwd != cfg.Password || parsed.DBName != cfg.Name || !parsed.ParseTime {
+					t.Fatalf("invalid mysql configuration: %#v %v", parsed, err)
+				}
+			} else {
+				parsed, err := pgx.ParseConfig(dsn)
+				if err != nil || parsed.Password != cfg.Password || parsed.Database != cfg.Name {
+					t.Fatalf("invalid postgres configuration: %#v %v", parsed, err)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectionStringRejectsInvalidConfiguration(t *testing.T) {
+	for _, cfg := range []config.Database{
+		{Driver: "sqlite", Host: "localhost", Port: 5432, Name: "app", User: "app"},
+		{Driver: "postgres", Host: "", Port: 5432, Name: "app", User: "app"},
+		{Driver: "mysql", Host: "localhost", Port: 0, Name: "app", User: "app"},
+	} {
+		if _, err := ConnectionString(cfg); err == nil {
+			t.Fatalf("accepted invalid database configuration: %+v", cfg)
+		}
+	}
+}
