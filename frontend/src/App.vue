@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Globe2, LogIn, LogOut, Menu, Settings2, X } from 'lucide-vue-next'
@@ -13,6 +13,8 @@ const { locale } = useI18n()
 const ready = ref(false)
 const failed = ref(false)
 const menuOpen = ref(false)
+const logoutFailed = ref(false)
+let lastActivityRenewal = 0
 const isSetup = computed(() => route.path === '/setup')
 
 async function bootstrap() {
@@ -35,11 +37,30 @@ function setLanguage(value: string) {
 }
 
 async function logout() {
-  await auth.logout()
-  await router.push('/')
+  try {
+    logoutFailed.value = false
+    await auth.logout()
+    await router.push('/')
+  } catch { logoutFailed.value = true }
 }
 
-onMounted(bootstrap)
+function renewOnActivity() {
+  if (!auth.user || Date.now() - lastActivityRenewal < 5 * 60_000) return
+  lastActivityRenewal = Date.now()
+  void auth.restore().catch(() => {})
+}
+
+onMounted(() => {
+  void bootstrap()
+  window.addEventListener('pointerdown', renewOnActivity)
+  window.addEventListener('keydown', renewOnActivity)
+  window.addEventListener('scroll', renewOnActivity, { passive: true })
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', renewOnActivity)
+  window.removeEventListener('keydown', renewOnActivity)
+  window.removeEventListener('scroll', renewOnActivity)
+})
 </script>
 
 <template>
@@ -68,7 +89,7 @@ onMounted(bootstrap)
       </div>
       <nav v-if="menuOpen" class="mobile-nav"><RouterLink to="/movies" @click="menuOpen = false">{{ $t('nav.movies') }}</RouterLink><RouterLink to="/actresses" @click="menuOpen = false">{{ $t('nav.actresses') }}</RouterLink><RouterLink v-if="auth.user?.is_admin" to="/admin/sources" @click="menuOpen = false">{{ $t('nav.manage') }}</RouterLink></nav>
     </header>
-    <main v-if="ready" class="main-content" :class="{ 'setup-main': isSetup }"><RouterView /></main>
+    <main v-if="ready" class="main-content" :class="{ 'setup-main': isSetup }"><p v-if="logoutFailed" class="error-text">{{ $t('common.error') }}</p><RouterView /></main>
     <main v-else class="startup-state"><div v-if="failed" class="notice-error">{{ $t('common.error') }} <button class="btn btn-sm" @click="bootstrap">{{ $t('common.retry') }}</button></div><span v-else class="loading loading-spinner loading-md"></span></main>
     <footer v-if="!isSetup && ready" class="site-footer"><span>LibreFanza</span><a href="https://github.com/libredmm/librefanza" target="_blank" rel="noreferrer">GitHub ↗</a></footer>
   </div>

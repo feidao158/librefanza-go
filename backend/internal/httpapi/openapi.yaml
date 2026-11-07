@@ -5,8 +5,7 @@ info:
   description: |
     影片、演员、采集任务和管理接口。JSON 成功响应使用 data 字段，列表额外包含 meta。
     错误响应格式为 {"error":{"code":"错误代码"}}，空响应使用 204。
-    浏览器通过安全 Cookie 保存刷新令牌；移动端登录时指定 client 为 mobile，
-    使用返回的 refresh_token 轮换令牌并保存在设备安全存储中。
+    客户端使用 Bearer 令牌认证；令牌连续 30 天无有效活动后过期，活动请求自动续期。
 servers:
   - url: /api/v1
 tags:
@@ -87,30 +86,18 @@ paths:
   /auth/sessions:
     post:
       tags: [认证]
-      summary: 登录，client 为 web 或 mobile
+      summary: 登录并获取访问令牌
       requestBody: { $ref: '#/components/requestBodies/Credentials' }
       responses:
         '201': { $ref: '#/components/responses/Tokens' }
         '401': { description: 认证失败 }
-  /auth/refresh:
-    post:
-      tags: [认证]
-      summary: 轮换访问令牌和刷新令牌
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                refresh_token: { type: string, description: 移动端刷新令牌；浏览器使用 Cookie }
-      responses:
-        '200': { $ref: '#/components/responses/Tokens' }
-        '401': { description: 刷新令牌无效或过期 }
   /auth/me:
     get:
       tags: [认证]
       summary: 获取当前用户
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: X-Session-Activity, in: header, required: false, schema: { type: string, enum: [passive] }, description: 被动轮询时传 passive，可校验令牌但不延长空闲有效期 }
       responses:
         '200':
           description: 当前用户
@@ -201,6 +188,21 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/Movie' }
         '404': { description: 未找到或已隐藏 }
+  /movies/{id}/metadata-job:
+    get:
+      tags: [影片与演员]
+      summary: 查看影片多来源补采进度
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '200':
+          description: 任务状态及已完成和失败的来源数量
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MetadataJob' }
+        '404': { description: 没有补采任务 }
   /source-items/{id}:
     get:
       tags: [影片与演员]
@@ -226,6 +228,17 @@ paths:
       responses:
         '200': { description: 图片内容 }
         '404': { description: 未找到或关联影片已隐藏 }
+        '502': { description: 来源图片不可用 }
+  /source-items/{id}/images/samples/{index}:
+    get:
+      tags: [影片与演员]
+      summary: 代理受支持来源的预览图片
+      parameters:
+        - { $ref: '#/components/parameters/ID' }
+        - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: 图片内容 }
+        '404': { description: 来源或图片不存在 }
         '502': { description: 来源图片不可用 }
   /actress-filmographies:
     get:
@@ -580,6 +593,11 @@ paths:
       tags: [管理]
       summary: 查看任务状态
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [collection, metadata] } }
+        - { name: status, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
       responses: { '200': { description: 任务列表 } }
   /admin/jobs/{id}/retries:
     post:
@@ -588,12 +606,30 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ID' }]
       responses: { '202': { description: 已重新排队 } }
+  /admin/metadata-backfill:
+    get:
+      tags: [管理]
+      summary: 查看历史元数据补采进度和失败任务数
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 历史补采进度
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      progress: { $ref: '#/components/schemas/MetadataBackfill' }
+                      failed_jobs: { type: integer }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
   responses:
     Tokens:
-      description: 访问令牌及用户信息；移动端包含刷新令牌，浏览器通过 Cookie 接收刷新令牌
+      description: 访问令牌及用户信息
       content:
         application/json:
           schema:
@@ -615,13 +651,32 @@ components:
             properties:
               email: { type: string, format: email }
               password: { type: string, format: password }
-              client: { type: string, enum: [web, mobile] }
     Settings:
       required: true
       content:
         application/json:
           schema: { type: object, additionalProperties: true }
   schemas:
+    MetadataJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        completed_sources: { type: integer }
+        failed_sources: { type: integer }
+        total_sources: { type: integer }
+    MetadataBackfill:
+      type: object
+      properties:
+        phase: { type: string, enum: [raw, movies] }
+        cursor_id: { type: integer, format: int64 }
+        movie_cursor_id: { type: integer, format: int64 }
+        raw_limit_id: { type: integer, format: int64 }
+        movie_limit_id: { type: integer, format: int64 }
+        processed: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        completed: { type: boolean }
+        updated_at: { type: string, format: date-time }
     ApplicationLog:
       type: object
       properties:
@@ -683,7 +738,6 @@ components:
       type: object
       properties:
         access_token: { type: string }
-        refresh_token: { type: string, description: 仅移动端返回 }
         expires_in: { type: integer, description: 访问令牌有效期，单位为秒 }
         user: { $ref: '#/components/schemas/User' }
     JobID:
@@ -723,7 +777,7 @@ components:
       type: object
       properties:
         id: { type: integer, format: int64 }
-        source: { type: string, enum: [fanza, sod, mgstage, javlibrary, fc2] }
+        source: { type: string, enum: [fanza, sod, mgstage, javlibrary, fc2, avmoo, jable, libredmm] }
         external_id: { type: string }
         normalized_id: { type: string }
         priority: { type: integer }
@@ -733,6 +787,7 @@ components:
         source_url: { type: string }
         cover_image_url: { type: string }
         thumbnail_image_url: { type: string }
+        cover_image_original_url: { type: string, description: 代理封面的原始地址，用于去重 }
         metadata: { $ref: '#/components/schemas/MovieMetadata' }
     MovieMetadata:
       type: object
@@ -748,7 +803,9 @@ components:
         labels: { type: array, items: { type: string } }
         makers: { type: array, items: { type: string } }
         directors: { type: array, items: { type: string } }
+        series: { type: array, items: { type: string } }
         sample_image_urls: { type: array, items: { type: string } }
+        sample_image_original_urls: { type: array, items: { type: string }, description: 与预览图片地址对应的原始地址，用于去重 }
         volume_minutes: { type: integer }
         rating: { type: number }
     Actress:

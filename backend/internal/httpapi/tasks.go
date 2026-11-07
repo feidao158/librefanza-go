@@ -65,6 +65,30 @@ func RegisterTaskRoutes(router *gin.Engine, provider *database.Provider, taskSer
 		}
 		c.JSON(http.StatusOK, gin.H{"data": status})
 	})
+	api.GET("/movies/:id/metadata-job", func(c *gin.Context) {
+		service, err := taskService(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "tasks_unavailable")
+			return
+		}
+		manager, ok := service.(interface {
+			EnrichmentStatus(context.Context, string) (tasks.MetadataStatus, error)
+		})
+		if !ok {
+			respondError(c, http.StatusServiceUnavailable, "tasks_unavailable")
+			return
+		}
+		status, err := manager.EnrichmentStatus(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			if errors.Is(err, tasks.ErrJobNotFound) {
+				respondError(c, http.StatusNotFound, "not_found")
+			} else {
+				respondError(c, http.StatusServiceUnavailable, "tasks_unavailable")
+			}
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": status})
+	})
 	api.POST("/admin/maintenance-jobs", func(c *gin.Context) {
 		if !requireAdmin(c, provider) {
 			return
@@ -132,9 +156,13 @@ func requireAdmin(c *gin.Context, provider *database.Provider) bool {
 		respondError(c, http.StatusServiceUnavailable, "database_unavailable")
 		return false
 	}
-	user, err := auth.NewService(db).Authenticate(c.Request.Context(), bearer(c))
+	user, err := auth.NewService(db).AuthenticateWithActivity(c.Request.Context(), bearer(c), c.GetHeader("X-Session-Activity") != "passive")
 	if err != nil {
-		respondError(c, http.StatusUnauthorized, "unauthorized")
+		if errors.Is(err, auth.ErrUnauthorized) {
+			respondError(c, http.StatusUnauthorized, "unauthorized")
+		} else {
+			respondError(c, http.StatusServiceUnavailable, "database_unavailable")
+		}
 		return false
 	}
 	if !user.IsAdmin {

@@ -4,7 +4,9 @@ export interface MovieMetadata {
   labels?: string[]
   makers?: string[]
   directors?: string[]
+  series?: string[]
   sample_image_urls?: string[]
+  sample_image_original_urls?: string[]
   volume_minutes?: number
   rating?: number
 }
@@ -20,6 +22,7 @@ export interface SourceItem {
   description: string
   source_url: string
   cover_image_url: string
+  cover_image_original_url?: string
   thumbnail_image_url: string
   metadata: MovieMetadata
   created_at: string

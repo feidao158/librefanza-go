@@ -65,11 +65,14 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		page, size := pageParams(c)
 		query := db.Model(&jobs.Job{})
 		if c.Query("kind") == "collection" {
-			query = query.Where("type IN ?", []string{"source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl"})
+			query = query.Where("type IN ?", []string{"source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl", "metadata_backfill"})
+		} else if c.Query("kind") == "metadata" {
+			query = query.Where("type IN ?", []string{"metadata_enrich", "metadata_backfill"})
 		}
 		if status := c.Query("status"); status != "" {
 			query = query.Where("status = ?", status)
 		}
+		query = query.Where("type NOT IN ?", []string{"maintenance_tick", "metadata_backfill_tick"})
 		var total int64
 		var entries []jobs.Job
 		if query.Count(&total).Error != nil || query.Order("created_at DESC").Offset((page-1)*size).Limit(size).Find(&entries).Error != nil {
@@ -78,9 +81,24 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		result := make([]gin.H, 0, len(entries))
 		ids := make([]string, 0, len(entries))
+		metadataIDs := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			if entry.Type == "source_crawl" {
 				ids = append(ids, entry.ID.String())
+			}
+			if entry.Type == "metadata_enrich" {
+				metadataIDs = append(metadataIDs, entry.ID.String())
+			}
+		}
+		metadataFailures := make(map[string][]tasks.MetadataSourceProgress)
+		if len(metadataIDs) > 0 {
+			var rows []tasks.MetadataSourceProgress
+			if err := db.Where("job_id IN ? AND status = ?", metadataIDs, "failed").Find(&rows).Error; err != nil {
+				respondError(c, http.StatusInternalServerError, "internal_error")
+				return
+			}
+			for _, row := range rows {
+				metadataFailures[row.JobID] = append(metadataFailures[row.JobID], row)
 			}
 		}
 		progress := make(map[string]tasks.CrawlProgress, len(ids))
@@ -96,6 +114,13 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		for _, entry := range entries {
 			value := gin.H{"id": entry.ID.String(), "type": entry.Type, "status": entry.Status, "attempt": entry.Attempt, "created_at": entry.CreatedAt, "started_at": entry.StartedAt, "completed_at": entry.CompletedAt}
+			if entry.Type == "metadata_enrich" {
+				value["metadata_failures"] = metadataFailures[entry.ID.String()]
+				var request tasks.SearchArgs
+				if json.Unmarshal(entry.Args, &request) == nil {
+					value["metadata_movie_id"] = request.ID
+				}
+			}
 			if entry.Type == "source_crawl" {
 				var request sources.CrawlRequest
 				if json.Unmarshal(entry.Args, &request) == nil {
@@ -111,6 +136,23 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			result = append(result, value)
 		}
 		c.JSON(http.StatusOK, gin.H{"data": result, "meta": gin.H{"page": page, "page_size": size, "total": total}})
+	})
+	api.GET("/admin/metadata-backfill", func(c *gin.Context) {
+		db := databaseForAdmin(c)
+		if db == nil {
+			return
+		}
+		var progress tasks.MetadataBackfillProgress
+		if err := db.First(&progress, 1).Error; err != nil {
+			respondError(c, http.StatusServiceUnavailable, "database_unavailable")
+			return
+		}
+		var failed int64
+		if err := db.Model(&jobs.Job{}).Where("type = ? AND status = ?", "metadata_enrich", "failed").Count(&failed).Error; err != nil {
+			respondError(c, http.StatusServiceUnavailable, "database_unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"progress": progress, "failed_jobs": failed}})
 	})
 	api.POST("/admin/jobs/:id/retries", func(c *gin.Context) {
 		db := databaseForAdmin(c)

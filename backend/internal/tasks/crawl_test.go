@@ -143,9 +143,13 @@ func TestCrawlPanicRetriesWithoutLoggingSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	jobID, err := jobs.ParseUUID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Where("task_id = ?", id).Delete(&logbook.Entry{})
 	defer db.Where("job_id = ?", id).Delete(&CrawlProgress{})
-	defer db.Where("id = ?", id).Delete(&jobs.Job{})
+	defer db.Where("id = ?", jobID).Delete(&jobs.Job{})
 	if err := manager.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +157,7 @@ func TestCrawlPanicRetriesWithoutLoggingSecret(t *testing.T) {
 	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
 		var job jobs.Job
-		if err := db.Where("id = ?", id).First(&job).Error; err != nil {
+		if err := db.Where("id = ?", jobID).First(&job).Error; err != nil {
 			t.Fatal(err)
 		}
 		if job.Status == "completed" {

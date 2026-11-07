@@ -41,6 +41,20 @@ func TestRecorderOutputsSafeFailureWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestKnownConfigurationErrorsProvideSpecificSafeReason(t *testing.T) {
+	for _, test := range []struct{ message, reason string }{
+		{"Fanza credentials are not configured", "fanza_credentials"},
+		{"MGStage series URL is not configured", "mgstage_series"},
+		{"invalid proxy URL", "proxy_configuration"},
+	} {
+		entry := Entry{}
+		ApplyFailure(&entry, errors.New(test.message))
+		if entry.Reason != test.reason {
+			t.Errorf("%s 的原因 = %s，期望 %s", test.message, entry.Reason, test.reason)
+		}
+	}
+}
+
 func TestRecorderPersistsFiltersAndCleansLogs(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {
@@ -74,5 +88,26 @@ func TestRecorderPersistsFiltersAndCleansLogs(t *testing.T) {
 	_, total, err = List(context.Background(), db, Filter{Level: "error", Source: "avmoo", TaskID: jobID, Page: 1, PageSize: 1})
 	if err != nil || total != 0 {
 		t.Fatalf("过期日志未清理：%d，错误 = %v", total, err)
+	}
+}
+
+func TestRecorderKeepsOutputWhenDatabaseIsUnavailable(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, _ := db.DB()
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	New(db, &output).Record(context.Background(), Entry{Level: "error", Event: "task_failed", Reason: "dns"})
+	if !strings.Contains(output.String(), `"reason":"dns"`) || !strings.Contains(output.String(), `"event":"log_storage_failed"`) {
+		t.Fatalf("数据库不可用时缺少标准输出：%s", output.String())
 	}
 }

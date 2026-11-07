@@ -1,0 +1,72 @@
+import { expect, test } from '@playwright/test'
+
+test('连续刷新保留令牌并汇总不同来源的详情与图片', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'persistent-token'))
+  const fanza = { id: 1, source: 'fanza', title: 'Fanza title', normalized_id: 'ABC-123', cover_image_url: '', metadata: { genres: ['剧情'], sample_image_urls: ['https://example.com/a.jpg'] } }
+  const sod = { id: 2, source: 'sod', title: 'SOD title', normalized_id: 'ABC-123', cover_image_url: '', metadata: { genres: ['其他'], sample_image_urls: ['https://example.com/b.jpg'] } }
+  await page.route('**/api/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/auth/me')) {
+      expect(route.request().headers().authorization).toBe('Bearer persistent-token')
+      return route.fulfill({ json: { data: { id: 1, email: 'admin@example.com', is_admin: true } } })
+    }
+    if (path.endsWith('/setup')) return route.fulfill({ json: { data: { installed: true } } })
+    if (path.endsWith('/movies/ABC-123')) return route.fulfill({ json: { data: { id: 1, normalized_id: 'ABC-123', preferred_item: fanza, versions: [fanza, sod] } } })
+    if (path.endsWith('/metadata-job')) return route.fulfill({ status: 404, json: { error: { code: 'not_found' } } })
+    return route.fulfill({ json: { data: [] } })
+  })
+  await page.goto('/movies/ABC-123')
+  for (let i = 0; i < 3; i++) {
+    await page.reload()
+    await expect(page.getByTitle('admin@example.com')).toBeVisible()
+  }
+  await expect(page.getByText('剧情', { exact: false }).first()).toBeVisible()
+  await expect(page.getByText('其他', { exact: false }).first()).toBeVisible()
+  await expect(page.locator('.sample-grid figure')).toHaveCount(2)
+  await expect(page.locator('.sample-grid')).toContainText('FANZA')
+  await expect(page.locator('.sample-grid')).toContainText('SOD')
+  await page.getByRole('link', { name: 'SOD SOD title' }).click()
+  await expect(page.locator('.sample-grid figure')).toHaveCount(1)
+})
+
+test('不同标签页同步登录退出且被动轮询不续期', async ({ context, page }) => {
+  let renewals = 0
+  await context.route('**/api/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/setup')) return route.fulfill({ json: { data: { installed: true } } })
+    if (path.endsWith('/auth/sessions') && route.request().method() === 'POST') return route.fulfill({ json: { data: { access_token: 'shared-token', user: { id: 1, email: 'user@example.com', is_admin: false } } } })
+    if (path.endsWith('/auth/me')) { renewals++; return route.fulfill({ json: { data: { id: 1, email: 'user@example.com', is_admin: false } } }) }
+    if (path.endsWith('/auth/sessions/current')) return route.fulfill({ status: 204 })
+    return route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } })
+  })
+  const second = await context.newPage()
+  await second.goto('/movies')
+  await page.goto('/login')
+  await page.getByLabel('电子邮箱').fill('user@example.com')
+  await page.getByLabel('密码').fill('password123')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(second.getByTitle('user@example.com')).toBeVisible()
+  const beforeIdle = renewals
+  await second.waitForTimeout(800)
+  expect(renewals).toBe(beforeIdle)
+  await page.getByTitle('user@example.com').click()
+  await page.getByRole('button', { name: '退出登录' }).click()
+  await expect(second.getByRole('link', { name: '登录' })).toBeVisible()
+  await second.close()
+})
+
+test('暂时无法验证时仍显示已缓存的登录用户', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('librefanza-access-token', 'saved-token')
+    window.localStorage.setItem('librefanza-user', JSON.stringify({ token: 'saved-token', user: { id: 1, email: 'saved@example.com', is_admin: false } }))
+  })
+  await page.route('**/api/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/setup')) return route.fulfill({ json: { data: { installed: true } } })
+    if (path.endsWith('/auth/me')) return route.fulfill({ status: 503, json: { error: { code: 'database_unavailable' } } })
+    return route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } })
+  })
+  await page.goto('/movies')
+  await expect(page.getByTitle('saved@example.com')).toBeVisible()
+  expect(await page.evaluate(() => window.localStorage.getItem('librefanza-access-token'))).toBe('saved-token')
+})

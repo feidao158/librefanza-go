@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/mail"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrInvalidInput = errors.New("invalid input")
 	ErrConflict     = errors.New("account already exists")
+	ErrDatabase     = errors.New("authentication database unavailable")
 )
 
 type User struct {
@@ -32,14 +34,12 @@ type User struct {
 }
 
 type session struct {
-	ID               uint64
-	UserID           uint64
-	AccessHash       string
-	RefreshHash      string
-	AccessExpiresAt  time.Time
-	RefreshExpiresAt time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID              uint64
+	UserID          uint64
+	AccessHash      string
+	AccessExpiresAt time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func (session) TableName() string { return "api_sessions" }
@@ -55,10 +55,9 @@ type resetToken struct {
 func (resetToken) TableName() string { return "password_reset_tokens" }
 
 type Tokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresIn    int    `json:"expires_in"`
-	User         User   `json:"user"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	User        User   `json:"user"`
 }
 
 type Service struct{ db *gorm.DB }
@@ -89,73 +88,74 @@ func (s *Service) Register(ctx context.Context, email, password string) (User, e
 func (s *Service) Login(ctx context.Context, email, password string) (Tokens, error) {
 	var user User
 	err := s.db.WithContext(ctx).Where("email = ?", strings.ToLower(strings.TrimSpace(email))).First(&user).Error
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Tokens{}, ErrUnauthorized
 	}
-	access, refresh, err := newTokens()
+	if err != nil {
+		return Tokens{}, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+		return Tokens{}, ErrUnauthorized
+	}
+	access, err := newToken()
 	if err != nil {
 		return Tokens{}, err
 	}
 	now := time.Now().UTC()
-	record := session{UserID: user.ID, AccessHash: tokenHash(access), RefreshHash: tokenHash(refresh), AccessExpiresAt: now.Add(15 * time.Minute), RefreshExpiresAt: now.Add(30 * 24 * time.Hour)}
+	record := session{UserID: user.ID, AccessHash: tokenHash(access), AccessExpiresAt: now.Add(30 * 24 * time.Hour)}
 	if err := s.db.WithContext(ctx).Create(&record).Error; err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
-	return Tokens{AccessToken: access, RefreshToken: refresh, ExpiresIn: 900, User: user}, nil
+	return Tokens{AccessToken: access, ExpiresIn: 30 * 24 * 60 * 60, User: user}, nil
 }
 
 func (s *Service) Authenticate(ctx context.Context, token string) (User, error) {
+	return s.AuthenticateWithActivity(ctx, token, true)
+}
+
+func (s *Service) AuthenticateWithActivity(ctx context.Context, token string, active bool) (User, error) {
 	if token == "" {
 		return User{}, ErrUnauthorized
 	}
 	var record session
-	if err := s.db.WithContext(ctx).Where("access_hash = ? AND access_expires_at > ?", tokenHash(token), time.Now().UTC()).First(&record).Error; err != nil {
+	now := time.Now().UTC()
+	err := s.db.WithContext(ctx).Where("access_hash = ? AND access_expires_at > ?", tokenHash(token), now).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return User{}, ErrUnauthorized
 	}
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
 	var user User
-	if err := s.db.WithContext(ctx).First(&user, record.UserID).Error; err != nil {
+	err = s.db.WithContext(ctx).First(&user, record.UserID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return User{}, ErrUnauthorized
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+	if !active {
+		return user, nil
+	}
+	expiresAt := now.Add(30 * 24 * time.Hour)
+	result := s.db.WithContext(ctx).Model(&session{}).Where("id = ? AND access_expires_at > ?", record.ID, now).Updates(map[string]any{"access_expires_at": gorm.Expr("CASE WHEN access_expires_at > ? THEN access_expires_at ELSE ? END", expiresAt, expiresAt), "updated_at": now})
+	if result.Error != nil {
+		return User{}, fmt.Errorf("%w: %v", ErrDatabase, result.Error)
+	}
+	if result.RowsAffected != 1 {
 		return User{}, ErrUnauthorized
 	}
 	return user, nil
-}
-
-func (s *Service) Refresh(ctx context.Context, token string) (Tokens, error) {
-	if token == "" {
-		return Tokens{}, ErrUnauthorized
-	}
-	access, refresh, err := newTokens()
-	if err != nil {
-		return Tokens{}, err
-	}
-	now := time.Now().UTC()
-	var user User
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&session{}).Where("refresh_hash = ? AND refresh_expires_at > ?", tokenHash(token), now).Updates(map[string]any{
-			"access_hash": tokenHash(access), "refresh_hash": tokenHash(refresh), "access_expires_at": now.Add(15 * time.Minute), "refresh_expires_at": now.Add(30 * 24 * time.Hour),
-		})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return ErrUnauthorized
-		}
-		var record session
-		if err := tx.Where("refresh_hash = ?", tokenHash(refresh)).First(&record).Error; err != nil {
-			return err
-		}
-		return tx.First(&user, record.UserID).Error
-	})
-	if err != nil {
-		return Tokens{}, err
-	}
-	return Tokens{AccessToken: access, RefreshToken: refresh, ExpiresIn: 900, User: user}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, accessToken string) error {
 	if accessToken == "" {
 		return ErrUnauthorized
 	}
-	return s.db.WithContext(ctx).Where("access_hash = ?", tokenHash(accessToken)).Delete(&session{}).Error
+	if err := s.db.WithContext(ctx).Where("access_hash = ?", tokenHash(accessToken)).Delete(&session{}).Error; err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+	return nil
 }
 
 func (s *Service) CreatePasswordReset(ctx context.Context, email string) (string, error) {
@@ -167,7 +167,7 @@ func (s *Service) CreatePasswordReset(ctx context.Context, email string) (string
 	if err != nil {
 		return "", err
 	}
-	token, _, err := newTokens()
+	token, err := newToken()
 	if err != nil {
 		return "", err
 	}
@@ -203,16 +203,12 @@ func (s *Service) ResetPassword(ctx context.Context, token, password string) err
 	})
 }
 
-func newTokens() (string, string, error) {
-	values := [2]string{}
-	for i := range values {
-		var data [32]byte
-		if _, err := rand.Read(data[:]); err != nil {
-			return "", "", err
-		}
-		values[i] = base64.RawURLEncoding.EncodeToString(data[:])
+func newToken() (string, error) {
+	var data [32]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
 	}
-	return values[0], values[1], nil
+	return base64.RawURLEncoding.EncodeToString(data[:]), nil
 }
 
 func tokenHash(value string) string {

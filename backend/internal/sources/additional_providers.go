@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -43,31 +42,16 @@ type avmooMovie struct {
 }
 
 func (p *httpProvider) postJSON(ctx context.Context, path string, input, output any) error {
-	if p.limiter != nil {
-		if err := p.limiter.Wait(ctx); err != nil {
-			return err
-		}
-	}
 	body, err := json.Marshal(input)
 	if err != nil {
 		return errors.New("invalid source request")
 	}
 	target := p.base.ResolveReference(&url.URL{Path: path})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	data, _, err := p.request(ctx, http.MethodPost, target.String(), http.Header{"Content-Type": {"application/json"}, "Accept": {"application/json, text/plain, */*"}}, body)
 	if err != nil {
-		return errors.New("invalid source request")
+		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return requestError(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &RequestError{Reason: "http", Status: resp.StatusCode}
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
-	if err != nil || len(data) > 8<<20 || json.Unmarshal(data, output) != nil {
+	if json.Unmarshal(data, output) != nil {
 		return errors.New("invalid source response")
 	}
 	return nil

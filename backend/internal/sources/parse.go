@@ -28,6 +28,7 @@ type Metadata struct {
 	Labels    []string     `json:"labels"`
 	Makers    []string     `json:"makers"`
 	Directors []string     `json:"directors"`
+	Series    []string     `json:"series,omitempty"`
 	Samples   []string     `json:"sample_image_urls"`
 	Volume    int          `json:"volume_minutes,omitempty"`
 	Rating    float64      `json:"rating,omitempty"`
@@ -76,6 +77,7 @@ func ParseFanza(body []byte) (Parsed, error) {
 			Label    []namedValue `json:"label"`
 			Maker    []namedValue `json:"maker"`
 			Director []namedValue `json:"director"`
+			Series   []namedValue `json:"series"`
 		} `json:"iteminfo"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -89,7 +91,7 @@ func ParseFanza(body []byte) (Parsed, error) {
 	if contentID == "" || title == "" || !catalog.IsProductID(id) {
 		return Parsed{}, errors.New("invalid source item")
 	}
-	metadata := Metadata{Genres: names(data.ItemInfo.Genre), Labels: names(data.ItemInfo.Label), Makers: names(data.ItemInfo.Maker), Directors: names(data.ItemInfo.Director)}
+	metadata := Metadata{Genres: names(data.ItemInfo.Genre), Labels: names(data.ItemInfo.Label), Makers: names(data.ItemInfo.Maker), Directors: names(data.ItemInfo.Director), Series: names(data.ItemInfo.Series)}
 	for _, actress := range data.ItemInfo.Actress {
 		name := strings.TrimSpace(actress.Name)
 		if name != "" {
@@ -154,7 +156,11 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 		item.Title = text(doc, "h1.tag")
 		item.CoverImageURL = attributeURL(doc, base, "#EnlargeImage", "href")
 		item.ThumbnailImageURL = attributeURL(doc, base, ".enlarge_image", "src")
-		item.Description = text(doc, "div.introduction")
+		item.Description = text(doc, "#introduction .introduction")
+		if item.Description == "" {
+			item.Description = text(doc, "div.introduction")
+		}
+		metadata.Samples = attributeURLs(doc, base, "#sample-photo a.sample_image", "href")
 		doc.Find(".detail_data table tr").Each(func(_ int, row *goquery.Selection) {
 			label, value := text(row, "th"), row.Find("td")
 			switch {
@@ -168,6 +174,8 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 				metadata.Genres = texts(value, "a")
 			case strings.HasPrefix(label, "レーベル"):
 				metadata.Labels = texts(value, "a")
+			case strings.HasPrefix(label, "シリーズ"):
+				metadata.Series = texts(value, "a")
 			case strings.HasPrefix(label, "メーカー"):
 				metadata.Makers = texts(value, "a")
 			case strings.HasPrefix(label, "収録時間"):
@@ -179,6 +187,7 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 		item.CoverImageURL = attributeURL(doc, base, "div.videos_samimg > a", "href")
 		item.ThumbnailImageURL = attributeURL(doc, base, "div.videos_samimg > a > img", "src")
 		item.Description = text(doc, "div.videos_textli > article")
+		metadata.Samples = attributeURLs(doc, base, "#videos_samsbox a", "href")
 		doc.Find("table#v_introduction tr").Each(func(_ int, row *goquery.Selection) {
 			label, value := text(row, "td.v_intr_ti"), row.Find("td.v_intr_tx")
 			switch {
@@ -207,10 +216,14 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 		}
 		item.NormalizedID = "FC2-" + number
 		item.Title = text(doc, ".items_article_headerInfo > h3")
-		item.CoverImageURL = attributeURL(doc, base, ".items_article_SampleImages li a", "href")
+		item.CoverImageURL = attributeURL(doc, base, `meta[property="og:image"]`, "content")
+		if item.CoverImageURL == "" {
+			item.CoverImageURL = attributeURL(doc, base, ".items_article_SampleImages li a", "href")
+		}
 		item.ThumbnailImageURL = attributeURL(doc, base, ".items_article_MainitemThumb img", "src")
 		item.ReleaseDate = parseDate(text(doc, "div.items_article_Releasedate"))
 		metadata.Labels = texts(doc, ".items_article_TagArea a.tag")
+		metadata.Samples = attributeURLs(doc, base, ".items_article_SampleImages li a", "href")
 	case "jable":
 		item.NormalizedID = catalog.NormalizeProductID(path.Base(strings.TrimRight(base.Path, "/")))
 		item.Title = text(doc, "h4")
@@ -220,7 +233,11 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 		}
 		item.CoverImageURL = attributeURL(doc, base, `meta[property="og:image"]`, "content")
 		item.ThumbnailImageURL = item.CoverImageURL
+		item.Description, _ = doc.Find(`meta[property="og:description"]`).Attr("content")
+		item.Description = strings.TrimSpace(item.Description)
 		metadata.Cast = cast(doc, `a[href*="/models/"]`)
+		metadata.Genres = texts(doc, `.video-info a[href*="/tags/"], .video-detail a[href*="/tags/"]`)
+		metadata.Samples = attributeURLs(doc, base, ".video-screenshots a[href], .screenshots a[href]", "href")
 	default:
 		return Parsed{}, errors.New("unsupported source")
 	}
@@ -291,6 +308,31 @@ func attributeURL(selection finder, base *url.URL, selector, attribute string) s
 		resolved.Scheme = "https"
 	}
 	return resolved.String()
+}
+
+func attributeURLs(selection finder, base *url.URL, selector, attribute string) []string {
+	result := []string{}
+	seen := map[string]bool{}
+	selection.Find(selector).Each(func(_ int, item *goquery.Selection) {
+		value, exists := item.Attr(attribute)
+		if !exists {
+			return
+		}
+		reference, err := url.Parse(strings.TrimSpace(value))
+		if err != nil {
+			return
+		}
+		resolved := base.ResolveReference(reference)
+		if (resolved.Scheme != "http" && resolved.Scheme != "https") || resolved.Host == "" || resolved.User != nil {
+			return
+		}
+		address := resolved.String()
+		if !seen[address] {
+			seen[address] = true
+			result = append(result, address)
+		}
+	})
+	return result
 }
 
 func parseDate(value string) *time.Time {

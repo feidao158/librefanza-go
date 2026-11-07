@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { CalendarClock, Play, RefreshCw, Save, X } from 'lucide-vue-next'
+import { CalendarClock, FileText, Play, RefreshCw, Save, X } from 'lucide-vue-next'
 import { api, ApiError, jsonBody } from '../api/client'
 import { decodeSchedule, encodeSchedule, type ScheduleEditor } from './crawlSchedule'
 
@@ -17,6 +17,7 @@ const entries: { key: Source; label: string; modern: boolean }[] = [
 const settings = ref<Settings | null>(null)
 const editors = reactive<Partial<Record<Source, ScheduleEditor>>>({})
 const jobs = ref<Job[]>([])
+const backfill = ref<{ progress: { phase: string; processed: number; failed: number; completed: boolean }; failed_jobs: number } | null>(null)
 const nextRuns = ref<Partial<Record<Source, string>>>({})
 const busy = ref(false)
 const error = ref('')
@@ -26,8 +27,10 @@ const form = reactive({ mode: 'incremental', start_page: 1, end_page: 3, start_d
 let timer: ReturnType<typeof setInterval> | undefined
 const hasActive = computed(() => jobs.value.some(job => ['pending', 'running', 'retrying', 'waiting'].includes(job.status)))
 
-async function loadJobs() {
-  jobs.value = (await api<Job[]>('/admin/jobs?kind=collection&page=1&page_size=100')).data || []
+async function loadJobs(passive = false) {
+  const headers = passive ? { 'X-Session-Activity': 'passive' } : undefined
+  jobs.value = (await api<Job[]>('/admin/jobs?kind=collection&page=1&page_size=100', { headers })).data || []
+  backfill.value = (await api<NonNullable<typeof backfill.value>>('/admin/metadata-backfill', { headers })).data
 }
 async function load() {
   busy.value = true; error.value = ''
@@ -79,7 +82,7 @@ async function retry(job: Job) {
   busy.value = true; error.value = ''
   try { await api(`/admin/jobs/${encodeURIComponent(job.id)}/retries`, { method: 'POST' }); await loadJobs() } catch { error.value = 'common.error' } finally { busy.value = false }
 }
-onMounted(() => { void load(); timer = setInterval(() => { if (hasActive.value && !busy.value) void loadJobs().catch(() => { error.value = 'common.error' }) }, 5000) })
+onMounted(() => { void load(); timer = setInterval(() => { if ((hasActive.value || !backfill.value?.progress.completed) && !busy.value) void loadJobs(true).catch(() => { error.value = 'common.error' }) }, 5000) })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
@@ -90,10 +93,19 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     <div v-if="success" class="alert alert-success status-alert" role="status">{{ $t('common.success') }}</div>
     <template v-if="settings">
       <div class="crawl-toolbar"><label class="field"><span>{{ $t('admin.timezone') }}</span><input v-model="settings.timezone" class="input input-sm" required></label><button class="btn search-button btn-sm" :disabled="busy" @click="save"><Save :size="15" />{{ $t('common.save') }}</button></div>
+      <div v-if="backfill" class="crawl-progress"><strong>{{ $t('metadata.backfill') }}</strong> · {{ $t(backfill.progress.completed ? 'metadata.done' : backfill.progress.phase === 'raw' ? 'metadata.raw' : 'metadata.movies') }} · {{ $t('metadata.processed') }} {{ backfill.progress.processed }} · {{ $t('metadata.failedJobs') }} {{ backfill.failed_jobs + backfill.progress.failed }} <RouterLink v-if="backfill.failed_jobs" :to="{ path: '/admin/tasks', query: { kind: 'metadata', status: 'failed' } }">{{ $t('common.retry') }}</RouterLink></div>
       <div class="crawl-list">
         <article v-for="entry in entries" :key="entry.key" class="crawl-row">
-          <div class="crawl-row-heading"><div><h3>{{ entry.label.startsWith('admin.') ? $t(label(entry.label)) : entry.label }}</h3><div class="crawl-meta"><span :class="settings[entry.key].enabled ? 'crawl-on' : 'crawl-off'">{{ $t(settings[entry.key].enabled ? 'common.enabled' : 'crawl.disabled') }}</span><template v-if="latest(entry.key)"><span>{{ $t(`jobs.statuses.${latest(entry.key)?.status}`) }}</span><time>{{ formatRun(latest(entry.key)!.created_at) }}</time></template><span v-else>{{ $t('crawl.never') }}</span></div></div><div class="crawl-actions"><label class="crawl-toggle"><span class="sr-only">{{ $t('common.enabled') }}</span><input v-model="settings[entry.key].enabled" class="toggle toggle-success toggle-sm" type="checkbox"></label><button class="btn btn-outline btn-sm" type="button" :disabled="busy" @click="run(entry.key, entry.modern)"><Play :size="14" />{{ $t('admin.run') }}</button></div></div>
-          <div v-if="editors[entry.key]" class="crawl-controls"><CalendarClock :size="16" /><select v-model="editors[entry.key]!.mode" class="select select-sm" :aria-label="$t('crawl.frequency')"><option value="hourly">{{ $t('crawl.hourly') }}</option><option value="daily">{{ $t('crawl.daily') }}</option><option value="weekly">{{ $t('crawl.weekly') }}</option><option value="custom">{{ $t('crawl.custom') }}</option></select><template v-if="editors[entry.key]!.mode !== 'custom'"><select v-if="editors[entry.key]!.mode === 'weekly'" v-model.number="editors[entry.key]!.weekday" class="select select-sm" :aria-label="$t('crawl.weekday')"><option v-for="day in 7" :key="day" :value="day - 1">{{ $t(`crawl.days.${day - 1}`) }}</option></select><input v-if="editors[entry.key]!.mode !== 'hourly'" v-model.number="editors[entry.key]!.hour" class="input input-sm crawl-number" type="number" min="0" max="23" :aria-label="$t('crawl.hour')"><span v-if="editors[entry.key]!.mode !== 'hourly'">:</span><input v-model.number="editors[entry.key]!.minute" class="input input-sm crawl-number" type="number" min="0" max="59" :aria-label="$t('crawl.minute')"></template><input v-else v-model="settings[entry.key].cron" class="input input-sm crawl-cron" :aria-label="$t('admin.expression')"></div>
+          <div class="crawl-row-heading"><div><h3>{{ entry.label.startsWith('admin.') ? $t(label(entry.label)) : entry.label }}</h3><div class="crawl-meta"><span :class="settings[entry.key].enabled ? 'crawl-on' : 'crawl-off'">{{ $t(settings[entry.key].enabled ? 'common.enabled' : 'crawl.disabled') }}</span><template v-if="latest(entry.key)"><span>{{ $t(`jobs.statuses.${latest(entry.key)?.status}`) }}</span><time>{{ formatRun(latest(entry.key)!.created_at) }}</time><RouterLink :to="{ path: '/admin/logs', query: { task_id: latest(entry.key)!.id } }" :title="$t('logActions.viewJob')" :aria-label="$t('logActions.viewJob')"><FileText :size="15" /></RouterLink></template><span v-else>{{ $t('crawl.never') }}</span></div></div><div class="crawl-actions"><label class="crawl-toggle"><span class="sr-only">{{ $t('common.enabled') }}</span><input v-model="settings[entry.key].enabled" class="toggle toggle-success toggle-sm" type="checkbox"></label><button class="btn btn-outline btn-sm" type="button" :disabled="busy" @click="run(entry.key, entry.modern)"><Play :size="14" />{{ $t('admin.run') }}</button></div></div>
+          <div v-if="editors[entry.key]" class="crawl-controls">
+            <CalendarClock :size="16" />
+            <select v-model="editors[entry.key]!.mode" class="select select-sm" :aria-label="$t('crawl.frequency')">
+              <option value="interval">{{ $t('intervalSchedule.mode') }}</option><option value="hourly">{{ $t('crawl.hourly') }}</option><option value="daily">{{ $t('crawl.daily') }}</option><option value="weekly">{{ $t('crawl.weekly') }}</option><option value="custom">{{ $t('crawl.custom') }}</option>
+            </select>
+            <select v-if="editors[entry.key]!.mode === 'interval'" :value="editors[entry.key]!.interval || 30" class="select select-sm" :aria-label="$t('crawl.frequency')" @change="editors[entry.key]!.interval = Number(($event.target as HTMLSelectElement).value)"><option v-for="interval in [5, 10, 15, 20, 30]" :key="interval" :value="interval">{{ $t('intervalSchedule.every', { count: interval }) }}</option></select>
+            <template v-else-if="editors[entry.key]!.mode !== 'custom'"><select v-if="editors[entry.key]!.mode === 'weekly'" v-model.number="editors[entry.key]!.weekday" class="select select-sm" :aria-label="$t('crawl.weekday')"><option v-for="day in 7" :key="day" :value="day - 1">{{ $t(`crawl.days.${day - 1}`) }}</option></select><input v-if="editors[entry.key]!.mode !== 'hourly'" v-model.number="editors[entry.key]!.hour" class="input input-sm crawl-number" type="number" min="0" max="23" :aria-label="$t('crawl.hour')"><span v-if="editors[entry.key]!.mode !== 'hourly'">:</span><input v-model.number="editors[entry.key]!.minute" class="input input-sm crawl-number" type="number" min="0" max="59" :aria-label="$t('crawl.minute')"></template>
+            <input v-else v-model="settings[entry.key].cron" class="input input-sm crawl-cron" :aria-label="$t('admin.expression')">
+          </div>
           <div v-if="nextRuns[entry.key]" class="crawl-progress">{{ $t('schedulePreview.next') }} {{ nextRuns[entry.key]?.slice(0, 16).replace('T', ' ') }} <span>{{ $t('schedulePreview.saved') }}</span></div>
           <div v-if="latest(entry.key)?.progress" class="crawl-progress">{{ $t('crawl.processed') }} {{ latest(entry.key)?.progress?.processed }} <span v-if="latest(entry.key)?.progress?.next_page">· {{ $t('crawl.nextPage') }} {{ latest(entry.key)?.progress?.next_page }}</span><span v-if="latest(entry.key)?.progress?.undated"> · {{ $t('crawl.undated') }} {{ latest(entry.key)?.progress?.undated }}</span></div>
           <div v-if="latest(entry.key)?.error_code" class="crawl-error">{{ $t(`crawl.errors.${latest(entry.key)?.error_code}`) }} <button v-if="latest(entry.key)?.status === 'failed'" class="btn btn-ghost btn-xs" @click="retry(latest(entry.key)!)">{{ $t('common.retry') }}</button></div>

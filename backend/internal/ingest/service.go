@@ -1,11 +1,13 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +20,8 @@ import (
 )
 
 type Service struct{ db *gorm.DB }
+
+var ErrStoredSourceInvalid = errors.New("stored source item is invalid")
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 
@@ -66,9 +70,25 @@ func (s *Service) Save(ctx context.Context, parsed sources.Parsed) error {
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		if item.Source == "fanza" && item.Description == "" {
+		if item.Description == "" {
 			item.Description = previous.Description
 		}
+		if item.CoverImageURL == "" {
+			item.CoverImageURL = previous.CoverImageURL
+		}
+		if item.ThumbnailImageURL == "" {
+			item.ThumbnailImageURL = previous.ThumbnailImageURL
+		}
+		if item.ReleaseDate == nil {
+			item.ReleaseDate = previous.ReleaseDate
+		}
+		if item.SourcePageID == nil {
+			item.SourcePageID = previous.SourcePageID
+		}
+		if item.RawJSON == "" {
+			item.RawJSON = previous.RawJSON
+		}
+		item.MetadataJSON = mergeMetadata(previous.MetadataJSON, item.MetadataJSON)
 		movie := catalog.Movie{NormalizedID: item.NormalizedID, CompressedID: catalog.CompressProductID(item.NormalizedID)}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&movie).Error; err != nil {
 			return err
@@ -104,6 +124,64 @@ func (s *Service) Save(ctx context.Context, parsed sources.Parsed) error {
 		}
 		return cache.BumpVersion(tx)
 	})
+}
+
+func (s *Service) ReparseSaved(ctx context.Context, item catalog.SourceItem) error {
+	var parsed sources.Parsed
+	var err error
+	switch item.Source {
+	case "fanza":
+		if item.RawJSON == "" {
+			return nil
+		}
+		parsed, err = sources.ParseFanza([]byte(item.RawJSON))
+	case "avmoo", "libredmm":
+		if item.RawJSON == "" {
+			return nil
+		}
+		parsed, err = sources.ParseRemoteJSON(item.Source, item.SourceURL, []byte(item.RawJSON))
+	default:
+		if item.SourcePageID == nil {
+			return nil
+		}
+		var entry page
+		if err = s.db.WithContext(ctx).First(&entry, *item.SourcePageID).Error; err != nil {
+			return err
+		}
+		parsed, err = sources.ParsePage(item.Source, entry.URL, []byte(entry.RawHTML))
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrStoredSourceInvalid, err)
+	}
+	if parsed.Item.NormalizedID != item.NormalizedID || parsed.Item.Source != item.Source {
+		return ErrStoredSourceInvalid
+	}
+	parsed.Item.ExternalID = item.ExternalID
+	return s.Save(ctx, parsed)
+}
+
+func mergeMetadata(previous, current string) string {
+	var oldValues, values map[string]json.RawMessage
+	if json.Unmarshal([]byte(previous), &oldValues) != nil {
+		oldValues = nil
+	}
+	if json.Unmarshal([]byte(current), &values) != nil {
+		values = map[string]json.RawMessage{}
+	}
+	if values == nil {
+		values = map[string]json.RawMessage{}
+	}
+	for key, old := range oldValues {
+		value := bytes.TrimSpace(values[key])
+		if len(value) == 0 || bytes.Equal(value, []byte("null")) || bytes.Equal(value, []byte(`""`)) || bytes.Equal(value, []byte("[]")) || bytes.Equal(value, []byte("{}")) || bytes.Equal(value, []byte("0")) {
+			values[key] = old
+		}
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return current
+	}
+	return string(encoded)
 }
 
 func (s *Service) SetPriority(ctx context.Context, itemID uint64, priority int) error {

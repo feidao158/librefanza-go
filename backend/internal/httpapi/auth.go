@@ -4,10 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/libredmm/librefanza/backend/internal/auth"
@@ -19,7 +16,6 @@ import (
 type credentials struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	Client   string `json:"client"`
 }
 
 func registerAuthRoutes(api *gin.RouterGroup, provider *database.Provider) {
@@ -48,7 +44,7 @@ func registerAuthRoutes(api *gin.RouterGroup, provider *database.Provider) {
 	})
 	api.POST("/auth/sessions", func(c *gin.Context) {
 		var request credentials
-		if c.ShouldBindJSON(&request) != nil || (request.Client != "" && request.Client != "web" && request.Client != "mobile") {
+		if c.ShouldBindJSON(&request) != nil {
 			respondError(c, http.StatusBadRequest, "invalid_request")
 			return
 		}
@@ -58,42 +54,12 @@ func registerAuthRoutes(api *gin.RouterGroup, provider *database.Provider) {
 				respondAuthError(c, err)
 				return
 			}
-			respondTokens(c, http.StatusCreated, tokens, request.Client == "mobile")
-		}
-	})
-	api.POST("/auth/refresh", func(c *gin.Context) {
-		var request struct {
-			RefreshToken string `json:"refresh_token"`
-		}
-		if c.Request.ContentLength != 0 {
-			if err := c.ShouldBindJSON(&request); err != nil {
-				respondError(c, http.StatusBadRequest, "invalid_request")
-				return
-			}
-		}
-		mobile := request.RefreshToken != ""
-		if !mobile {
-			if origin := c.GetHeader("Origin"); origin != "" {
-				parsed, err := url.Parse(origin)
-				if err != nil || !strings.EqualFold(parsed.Host, c.Request.Host) {
-					respondError(c, http.StatusForbidden, "invalid_origin")
-					return
-				}
-			}
-			request.RefreshToken, _ = c.Cookie("lf_refresh")
-		}
-		if authService := service(c); authService != nil {
-			tokens, err := authService.Refresh(c.Request.Context(), request.RefreshToken)
-			if err != nil {
-				respondAuthError(c, err)
-				return
-			}
-			respondTokens(c, http.StatusOK, tokens, mobile)
+			c.JSON(http.StatusCreated, gin.H{"data": tokens})
 		}
 	})
 	api.GET("/auth/me", func(c *gin.Context) {
 		if authService := service(c); authService != nil {
-			user, err := authService.Authenticate(c.Request.Context(), bearer(c))
+			user, err := authService.AuthenticateWithActivity(c.Request.Context(), bearer(c), c.GetHeader("X-Session-Activity") != "passive")
 			if err != nil {
 				respondAuthError(c, err)
 				return
@@ -111,7 +77,6 @@ func registerAuthRoutes(api *gin.RouterGroup, provider *database.Provider) {
 				respondAuthError(c, err)
 				return
 			}
-			writeRefreshCookie(c, "", -1)
 			c.Status(http.StatusNoContent)
 		}
 	})
@@ -172,18 +137,6 @@ func bearer(c *gin.Context) string {
 	return strings.TrimPrefix(value, "Bearer ")
 }
 
-func respondTokens(c *gin.Context, status int, tokens auth.Tokens, mobile bool) {
-	if !mobile {
-		writeRefreshCookie(c, tokens.RefreshToken, int((30 * 24 * time.Hour).Seconds()))
-		tokens.RefreshToken = ""
-	}
-	c.JSON(status, gin.H{"data": tokens})
-}
-
-func writeRefreshCookie(c *gin.Context, value string, maxAge int) {
-	http.SetCookie(c.Writer, &http.Cookie{Name: "lf_refresh", Value: value, Path: "/api/v1/auth", HttpOnly: true, Secure: os.Getenv("LIBREFANZA_INSECURE_COOKIES") != "true", SameSite: http.SameSiteStrictMode, MaxAge: maxAge})
-}
-
 func respondAuthError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, auth.ErrUnauthorized):
@@ -192,6 +145,8 @@ func respondAuthError(c *gin.Context, err error) {
 		respondError(c, http.StatusBadRequest, "invalid_request")
 	case errors.Is(err, auth.ErrConflict):
 		respondError(c, http.StatusConflict, "account_exists")
+	case errors.Is(err, auth.ErrDatabase):
+		respondError(c, http.StatusServiceUnavailable, "database_unavailable")
 	default:
 		respondError(c, http.StatusInternalServerError, "internal_error")
 	}

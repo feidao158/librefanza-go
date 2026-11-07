@@ -1,11 +1,60 @@
 package sources
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSourceFixturesIncludeDescriptionsAndSampleImages(t *testing.T) {
+	for _, test := range []struct {
+		source, address, file string
+		minSamples            int
+		description           bool
+	}{
+		{"mgstage", "https://www.mgstage.com/product/product_detail/261ARA-168/", "mgstage.html", 2, true},
+		{"sod", "https://ec.sod.co.jp/prime/videos/?id=STARS-455", "sod.html", 2, true},
+		{"fc2", "https://adult.contents.fc2.com/article/3069309/", "fc2.html", 2, false},
+	} {
+		t.Run(test.source, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join("testdata", test.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := ParsePage(test.source, test.address, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var metadata Metadata
+			if err := json.Unmarshal([]byte(item.Item.MetadataJSON), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if len(metadata.Samples) < test.minSamples {
+				t.Fatalf("only %d samples", len(metadata.Samples))
+			}
+			if test.description && item.Item.Description == "" {
+				t.Fatal("description missing")
+			}
+		})
+	}
+}
+
+func TestJableParsesAvailableDetails(t *testing.T) {
+	body := []byte(`<html><head><meta property="og:description" content="　简介　"><meta property="og:image" content="https://example.com/cover.jpg"></head><body><h4>ABC-123 title</h4><div class="video-info"><a href="/tags/example/">类别</a></div><div class="video-screenshots"><a href="https://example.com/1.jpg">one</a><a href="https://example.com/2.jpg">two</a></div></body></html>`)
+	item, err := ParsePage("jable", "https://jable.tv/videos/abc-123/", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata Metadata
+	if err := json.Unmarshal([]byte(item.Item.MetadataJSON), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if item.Item.Description != "简介" || len(metadata.Genres) != 1 || len(metadata.Samples) != 2 {
+		t.Fatalf("description or metadata missing: %+v", metadata)
+	}
+}
 
 func TestParseExistingSourceFixtures(t *testing.T) {
 	tests := []struct {

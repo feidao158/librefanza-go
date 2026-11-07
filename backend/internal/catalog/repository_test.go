@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,54 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/database"
 	"gorm.io/gorm"
 )
+
+func TestSampleImagesUseRestrictedProxy(t *testing.T) {
+	item := SourceItem{ID: 42, Source: "sod", MetadataJSON: `{"sample_image_urls":["https://dy43ylo5q3vt8.cloudfront.net/image.jpg","https://evil.example/image.jpg","javascript:alert(1)"]}`}
+	body, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "/api/v1/source-items/42/images/samples/0") || strings.Contains(string(body), "/images/samples/1") || strings.Contains(string(body), "javascript:") {
+		t.Fatalf("unexpected sample addresses: %s", body)
+	}
+}
+
+func TestManualCoverPreservesOriginalSourceVersion(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprintf("COVER-%d", time.Now().UnixNano())
+	movie := Movie{NormalizedID: id, CompressedID: id, CoverImageURL: "https://example.com/manual.jpg"}
+	if err := db.Create(&movie).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Delete(&movie)
+	item := SourceItem{Source: "sod", ExternalID: id, NormalizedID: id, Title: "title", CoverImageURL: "https://dy43ylo5q3vt8.cloudfront.net/original.jpg"}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Delete(&item)
+	repo := NewRepository(db)
+	result, err := repo.Movie(context.Background(), id)
+	if err != nil || result.PreferredItem.CoverImageURL != movie.CoverImageURL || result.Versions[0].CoverImageURL != item.CoverImageURL {
+		t.Fatal("manual cover replaced source version")
+	}
+	original, err := repo.SourceItem(context.Background(), item.ID)
+	if err != nil || original.CoverImageURL != item.CoverImageURL {
+		t.Fatal("source image endpoint lost original cover")
+	}
+}
 
 func TestMovieRepositorySearchAndPreferredSource(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")

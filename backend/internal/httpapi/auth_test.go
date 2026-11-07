@@ -20,7 +20,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/setup"
 )
 
-func TestAuthAPIForMobileClient(t *testing.T) {
+func TestAuthAPIUsesSingleToken(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {
 		t.Skip("需要设置测试数据库连接")
@@ -50,12 +50,11 @@ func TestAuthAPIForMobileClient(t *testing.T) {
 	}
 	var payload struct {
 		Data struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
+			AccessToken string `json:"access_token"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(login.Body.Bytes(), &payload); err != nil || payload.Data.AccessToken == "" || payload.Data.RefreshToken == "" {
-		t.Fatalf("missing tokens: %s %v", login.Body.String(), err)
+	if err := json.Unmarshal(login.Body.Bytes(), &payload); err != nil || payload.Data.AccessToken == "" || bytes.Contains(login.Body.Bytes(), []byte("refresh_token")) || len(login.Result().Cookies()) != 0 {
+		t.Fatalf("invalid token response: %v", err)
 	}
 	me := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
@@ -101,7 +100,7 @@ func TestPasswordResetDoesNotRevealWhetherAccountExists(t *testing.T) {
 	}
 }
 
-func TestWebSessionRefreshCookieAndLogout(t *testing.T) {
+func TestWebSessionSurvivesRepeatedRequestsAndLogout(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {
 		t.Skip("需要设置测试数据库连接")
@@ -129,37 +128,38 @@ func TestWebSessionRefreshCookieAndLogout(t *testing.T) {
 	if login.Code != http.StatusCreated || bytes.Contains(login.Body.Bytes(), []byte("refresh_token")) {
 		t.Fatalf("login: %d %s", login.Code, login.Body.String())
 	}
-	cookies := login.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || !cookies[0].Secure {
-		t.Fatal("refresh cookie missing security flags")
-	}
-	refresh := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewBufferString(`{}`))
-	req.AddCookie(cookies[0])
-	router.ServeHTTP(refresh, req)
-	if refresh.Code != http.StatusOK {
-		t.Fatalf("refresh: %d %s", refresh.Code, refresh.Body.String())
+	if len(login.Result().Cookies()) != 0 {
+		t.Fatal("login unexpectedly returned a cookie")
 	}
 	var payload struct {
 		Data struct {
 			AccessToken string `json:"access_token"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(refresh.Body.Bytes(), &payload); err != nil {
+	if err := json.Unmarshal(login.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
+	for i := 0; i < 3; i++ {
+		response := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		req.Header.Set("Authorization", "Bearer "+payload.Data.AccessToken)
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("request %d: %d", i, response.Code)
+		}
+	}
 	logout := httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodDelete, "/api/v1/auth/sessions/current", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/sessions/current", nil)
 	req.Header.Set("Authorization", "Bearer "+payload.Data.AccessToken)
 	router.ServeHTTP(logout, req)
 	if logout.Code != http.StatusNoContent {
 		t.Fatalf("logout: %d", logout.Code)
 	}
 	again := httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewBufferString(`{}`))
-	req.AddCookie(refresh.Result().Cookies()[0])
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+payload.Data.AccessToken)
 	router.ServeHTTP(again, req)
 	if again.Code != http.StatusUnauthorized {
-		t.Fatalf("refresh after logout: %d", again.Code)
+		t.Fatalf("authentication after logout: %d", again.Code)
 	}
 }

@@ -78,6 +78,7 @@ func TestOpenAPIDocumentsEveryAPIRoute(t *testing.T) {
 		path := strings.TrimPrefix(route.Path, "/api/v1")
 		path = strings.ReplaceAll(path, ":id", "{id}")
 		path = strings.ReplaceAll(path, ":variant", "{variant}")
+		path = strings.ReplaceAll(path, ":index", "{index}")
 		path = strings.ReplaceAll(path, ":token", "{token}")
 		item := doc.Paths.Find(path)
 		if item == nil || item.GetOperation(route.Method) == nil {

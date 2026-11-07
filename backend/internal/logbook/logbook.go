@@ -79,7 +79,8 @@ var reasonMessages = map[string]string{
 	"unknown": "原因未知", "http": "来源返回错误状态", "dns": "来源域名解析失败", "timeout": "请求超时",
 	"connection_refused": "连接被拒绝", "connection_reset": "连接被重置", "tls": "TLS 连接或证书错误",
 	"network": "网络请求失败", "cancelled": "任务已取消或服务正在停止", "verification": "来源要求验证",
-	"configuration": "来源配置缺失或无效", "invalid_response": "来源响应无法解析", "storage": "数据库操作失败", "panic": "任务执行期间发生异常",
+	"configuration": "来源配置缺失或无效", "fanza_credentials": "未配置 Fanza API 凭据", "mgstage_series": "MGStage 系列列表地址未配置或无效",
+	"proxy_configuration": "代理地址无效", "source_session": "来源会话无效", "invalid_response": "来源响应无法解析", "storage": "数据库操作失败", "panic": "任务执行期间发生异常",
 }
 
 func (r *Recorder) Clean(ctx context.Context, before time.Time) error {
@@ -126,6 +127,11 @@ func List(ctx context.Context, db *gorm.DB, filter Filter) ([]Entry, int64, erro
 func ApplyFailure(entry *Entry, err error) {
 	entry.Reason, entry.HTTPStatus, entry.Stage, entry.PositionType, entry.Position = "unknown", 0, "", "", 0
 	var crawl *sources.CrawlError
+	var save *sources.SaveError
+	if errors.As(err, &save) {
+		entry.Reason = "storage"
+		return
+	}
 	if errors.As(err, &crawl) {
 		entry.Stage, entry.PositionType, entry.Position = crawl.Stage, crawl.PositionType, crawl.Position
 		if crawl.Stage == "save" || crawl.Stage == "progress" {
@@ -147,8 +153,18 @@ func ApplyFailure(entry *Entry, err error) {
 		entry.Reason = "timeout"
 	case err != nil && strings.Contains(err.Error(), "source requires verification"):
 		entry.Reason = "verification"
-	case err != nil && (strings.Contains(err.Error(), "not configured") || strings.Contains(err.Error(), "invalid proxy URL")):
+	case err != nil && strings.Contains(err.Error(), "Fanza credentials are not configured"):
+		entry.Reason = "fanza_credentials"
+	case err != nil && (strings.Contains(err.Error(), "MGStage series URL is not configured") || strings.Contains(err.Error(), "invalid MGStage series URL")):
+		entry.Reason = "mgstage_series"
+	case err != nil && strings.Contains(err.Error(), "invalid proxy URL"):
+		entry.Reason = "proxy_configuration"
+	case err != nil && strings.Contains(err.Error(), "invalid source session"):
+		entry.Reason = "source_session"
+	case err != nil && strings.Contains(err.Error(), "not configured"):
 		entry.Reason = "configuration"
+	case err != nil && (strings.Contains(err.Error(), "cannot connect to database") || strings.Contains(err.Error(), "database connection test failed") || strings.Contains(err.Error(), "database migration failed")):
+		entry.Reason = "storage"
 	case err != nil && (strings.Contains(err.Error(), "invalid source") || strings.Contains(err.Error(), "invalid Fanza") || strings.Contains(err.Error(), "source page has no valid product") || strings.Contains(err.Error(), "source response too large")):
 		entry.Reason = "invalid_response"
 	}
@@ -158,8 +174,8 @@ func sanitize(entry *Entry) {
 	entry.Level = allowed(entry.Level, "info", "warn", "error")
 	entry.Event = allowed(entry.Event, "task_started", "task_completed", "task_failed", "source_failed", "worker_stopped", "worker_started", "worker_start_failed", "log_cleanup_failed")
 	entry.Source = allowed(entry.Source, "fanza", "sod", "mgstage", "fc2", "jable", "avmoo", "javlibrary", "libredmm")
-	entry.TaskType = allowed(entry.TaskType, "movie_search", "source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl", "rebuild_movies", "maintenance_tick")
-	entry.Reason = allowed(entry.Reason, "unknown", "http", "dns", "timeout", "connection_refused", "connection_reset", "tls", "network", "cancelled", "verification", "configuration", "invalid_response", "storage", "panic")
+	entry.TaskType = allowed(entry.TaskType, "movie_search", "source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl", "rebuild_movies", "maintenance_tick", "metadata_enrich", "metadata_backfill", "metadata_backfill_tick")
+	entry.Reason = allowed(entry.Reason, "unknown", "http", "dns", "timeout", "connection_refused", "connection_reset", "tls", "network", "cancelled", "verification", "configuration", "fanza_credentials", "mgstage_series", "proxy_configuration", "source_session", "invalid_response", "storage", "panic")
 	entry.Stage = allowed(entry.Stage, "fetch", "save", "progress")
 	entry.PositionType = allowed(entry.PositionType, "page", "number")
 	if len(entry.TaskID) != 36 || strings.Trim(entry.TaskID, "0123456789abcdefABCDEF-") != "" {

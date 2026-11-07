@@ -23,7 +23,6 @@ test('安装向导提交 MySQL、可选 Redis 和管理员配置', async ({ page
   await page.route('**/api/v1/setup/database-checks', route => { databaseChecked = true; return route.fulfill({ json: { data: { connected: true } } }) })
   await page.route('**/api/v1/setup/redis-checks', route => { redisChecked = true; return route.fulfill({ json: { data: { connected: true } } }) })
   await page.route('**/api/v1/setup/installations', route => { request = route.request().postDataJSON(); installed = true; return route.fulfill({ status: 201, json: { data: { installed: true } } }) })
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ status: 401, json: { error: { code: 'unauthorized' } } }))
   await page.route('**/api/v1/movies?*', route => route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } }))
   await page.goto('/')
   await page.getByLabel('数据库类型').selectOption('mysql')
@@ -44,7 +43,6 @@ test('安装向导提交 MySQL、可选 Redis 和管理员配置', async ({ page
 
 test('影片列表可切换英文并展示来源数据', async ({ page }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ status: 401, json: { error: { code: 'unauthorized' } } }))
   await page.route('**/api/v1/movies?*', route => route.fulfill({ json: { data: [{ id: 1, normalized_id: 'ABC-123', compressed_id: 'ABC-123', is_hidden: false, created_at: '', updated_at: '', preferred_item: { id: 1, source: 'fanza', title: '示例标题', thumbnail_image_url: '', cover_image_url: '' } }], meta: { page: 1, page_size: 30, total: 1 } } }))
   await page.goto('/movies')
   await expect(page.getByText('ABC-123')).toBeVisible()
@@ -56,7 +54,6 @@ test('影片列表可切换英文并展示来源数据', async ({ page }) => {
 
 test('影片详情可在不同来源版本之间切换', async ({ page }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ status: 401, json: { error: { code: 'unauthorized' } } }))
   const fanza = { id: 1, source: 'fanza', title: 'Fanza title', normalized_id: 'ABC-123', cover_image_url: '', thumbnail_image_url: '', metadata: {} }
   const sod = { id: 2, source: 'sod', title: 'SOD title', normalized_id: 'ABC-123', cover_image_url: '', thumbnail_image_url: '', metadata: {} }
   await page.route('**/api/v1/movies/ABC-123', route => route.fulfill({ json: { data: { id: 1, normalized_id: 'ABC-123', preferred_item: fanza, versions: [fanza, sod] } } }))
@@ -69,7 +66,6 @@ test('影片详情可在不同来源版本之间切换', async ({ page }) => {
 
 test('未收录演员资料时仍能从影片进入作品列表', async ({ page }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ status: 401, json: { error: { code: 'unauthorized' } } }))
   const movie = { id: 1, normalized_id: 'ABC-123', preferred_item: { id: 1, source: 'fanza', title: '示例影片', metadata: { cast: [{ name: '出演者 名' }] } } }
   await page.route('**/api/v1/movies/ABC-123', route => route.fulfill({ json: { data: movie } }))
   await page.route('**/api/v1/actress-filmographies?*', route => route.fulfill({ json: { data: { actress: { id: 0, name: '出演者 名', image_url: '' }, movies: [movie] }, meta: { page: 1, page_size: 30, total: 1 } } }))
@@ -83,7 +79,6 @@ test('未收录演员资料时仍能从影片进入作品列表', async ({ page 
 test('搜索未收录番号时自动提交检索任务', async ({ page }) => {
   let lookups = 0
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ status: 401, json: { error: { code: 'unauthorized' } } }))
   await page.route('**/api/v1/movies?*', route => route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } }))
   await page.route('**/api/v1/product-ids/normalize?*', route => route.fulfill({ json: { data: { valid: true, normalized: 'ABC-123' } } }))
   await page.route('**/api/v1/movies/ABC-123', route => {
@@ -103,7 +98,6 @@ test('搜索未收录番号时自动提交检索任务', async ({ page }) => {
 
 test('用户可以注册并登录', async ({ page }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ status: 401, json: { error: { code: 'unauthorized' } } }))
   let registered = false
   await page.route('**/api/v1/users', route => { registered = true; return route.fulfill({ status: 201, json: { data: {} } }) })
   await page.route('**/api/v1/auth/sessions', route => route.fulfill({ json: { data: { access_token: 'test-token', user: { id: 1, email: 'user@example.com', is_admin: false } } } }))
@@ -117,8 +111,8 @@ test('用户可以注册并登录', async ({ page }) => {
 })
 
 test('管理员可以调整 Redis、查看原始页面并重试任务', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'admin-token'))
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
-  await page.route('**/api/v1/auth/refresh', route => route.fulfill({ json: { data: { access_token: 'admin-token' } } }))
   await page.route('**/api/v1/auth/me', route => route.fulfill({ json: { data: { id: 1, email: 'admin@example.com', is_admin: true } } }))
   let savedRedis: unknown
   await page.route('**/api/v1/admin/settings/redis', route => {

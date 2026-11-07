@@ -29,7 +29,7 @@ type ScheduleSettings struct {
 }
 
 func DefaultScheduleSettings() ScheduleSettings {
-	return ScheduleSettings{Timezone: "America/Los_Angeles", Actress: Schedule{Enabled: true, Cron: "0 0 * * *"}, Fanza: Schedule{Enabled: true, Cron: "0 1 * * *"}, MGStage: Schedule{Enabled: true, Cron: "0 2 * * *"}, Jable: Schedule{Cron: "0 3 * * *"}, AVMOO: Schedule{Cron: "0 4 * * *"}, JavLibrary: Schedule{Cron: "0 5 * * *"}, LibreDMM: Schedule{Cron: "0 6 * * *"}}
+	return ScheduleSettings{Timezone: "America/Los_Angeles", Actress: Schedule{Enabled: true, Cron: "0 0 * * *"}, Fanza: Schedule{Enabled: true, Cron: "*/30 * * * *"}, MGStage: Schedule{Enabled: true, Cron: "*/30 * * * *"}, Jable: Schedule{Cron: "0 3 * * *"}, AVMOO: Schedule{Cron: "0 4 * * *"}, JavLibrary: Schedule{Cron: "0 5 * * *"}, LibreDMM: Schedule{Cron: "0 6 * * *"}}
 }
 
 func DueSchedules(settings ScheduleSettings, now time.Time) ([]string, error) {

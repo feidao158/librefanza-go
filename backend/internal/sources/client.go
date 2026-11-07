@@ -1,6 +1,7 @@
 package sources
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -18,23 +20,29 @@ import (
 )
 
 type ClientSettings struct {
-	FanzaURL              string `json:"fanza_url"`
-	FanzaAPIID            string `json:"fanza_api_id"`
-	FanzaAffiliateID      string `json:"fanza_affiliate_id"`
-	SODURL                string `json:"sod_url"`
-	MGStageURL            string `json:"mgstage_url"`
-	MGStageSeriesURL      string `json:"mgstage_series_url"`
-	FC2URL                string `json:"fc2_url"`
-	JableURL              string `json:"jable_url"`
-	AVMOOURL              string `json:"avmoo_url"`
-	JavLibraryURL         string `json:"javlibrary_url"`
-	LibreDMMURL           string `json:"libredmm_url"`
-	JableCookie           string `json:"jable_cookie"`
-	JavLibraryCookie      string `json:"javlibrary_cookie"`
-	ClearJableCookie      bool   `json:"clear_jable_cookie,omitempty"`
-	ClearJavLibraryCookie bool   `json:"clear_javlibrary_cookie,omitempty"`
-	ProxyURL              string `json:"proxy_url"`
-	ClearProxy            bool   `json:"clear_proxy,omitempty"`
+	RequestLimiter        RequestLimiter `json:"-"`
+	FanzaURL              string         `json:"fanza_url"`
+	FanzaAPIID            string         `json:"fanza_api_id"`
+	FanzaAffiliateID      string         `json:"fanza_affiliate_id"`
+	SODURL                string         `json:"sod_url"`
+	MGStageURL            string         `json:"mgstage_url"`
+	MGStageSeriesURL      string         `json:"mgstage_series_url"`
+	FC2URL                string         `json:"fc2_url"`
+	JableURL              string         `json:"jable_url"`
+	AVMOOURL              string         `json:"avmoo_url"`
+	JavLibraryURL         string         `json:"javlibrary_url"`
+	LibreDMMURL           string         `json:"libredmm_url"`
+	JableCookie           string         `json:"jable_cookie"`
+	JavLibraryCookie      string         `json:"javlibrary_cookie"`
+	ClearJableCookie      bool           `json:"clear_jable_cookie,omitempty"`
+	ClearJavLibraryCookie bool           `json:"clear_javlibrary_cookie,omitempty"`
+	ProxyURL              string         `json:"proxy_url"`
+	ClearProxy            bool           `json:"clear_proxy,omitempty"`
+}
+
+type RequestLimiter interface {
+	Wait(context.Context, string) error
+	Pause(context.Context, string, time.Time) error
 }
 
 type httpProvider struct {
@@ -42,7 +50,53 @@ type httpProvider struct {
 	base     *url.URL
 	client   *http.Client
 	settings ClientSettings
-	limiter  *rate.Limiter
+	gate     *sourceGate
+}
+
+type sourceGate struct {
+	limiter   *rate.Limiter
+	mu        sync.Mutex
+	notBefore time.Time
+}
+
+var sourceGates sync.Map
+
+func gateForSource(name string) *sourceGate {
+	gate, _ := sourceGates.LoadOrStore(name, &sourceGate{limiter: rate.NewLimiter(rate.Every(time.Second), 1)})
+	return gate.(*sourceGate)
+}
+
+func (g *sourceGate) wait(ctx context.Context) error {
+	if g == nil {
+		return nil
+	}
+	for {
+		g.mu.Lock()
+		delay := time.Until(g.notBefore)
+		g.mu.Unlock()
+		if delay <= 0 {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return g.limiter.Wait(ctx)
+}
+
+func (g *sourceGate) deferUntil(value time.Time) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if value.After(g.notBefore) {
+		g.notBefore = value
+	}
 }
 
 func (p *httpProvider) SourceName() string { return p.kind }
@@ -93,10 +147,7 @@ func NewProviders(settings ClientSettings) ([]Provider, error) {
 		if !strings.HasSuffix(base.Path, "/") {
 			base.Path += "/"
 		}
-		provider := &httpProvider{kind: entry.kind, base: base, client: client, settings: settings}
-		if entry.kind == "jable" || entry.kind == "javlibrary" || entry.kind == "avmoo" || entry.kind == "libredmm" {
-			provider.limiter = rate.NewLimiter(rate.Every(500*time.Millisecond), 1)
-		}
+		provider := &httpProvider{kind: entry.kind, base: base, client: client, settings: settings, gate: gateForSource(entry.kind)}
 		providers = append(providers, provider)
 	}
 	return providers, nil
@@ -224,8 +275,11 @@ func CrawlFanza(ctx context.Context, settings ClientSettings, days int, sink Sin
 	now := time.Now().In(location)
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 	seen := map[string]bool{}
-	for i := 1; i <= days; i++ {
-		start, end := day.AddDate(0, 0, -i), day.AddDate(0, 0, -(i-1))
+	for i := 0; i < days; i++ {
+		start, end := day.AddDate(0, 0, -i), day.AddDate(0, 0, 1-i)
+		if i == 0 {
+			end = now
+		}
 		err := provider.fanzaItems(ctx, "", "date", start.Format("2006-01-02T15:04:05"), end.Format("2006-01-02T15:04:05"), func(item Parsed) error {
 			if seen[item.Item.ExternalID] {
 				return nil
@@ -355,39 +409,111 @@ func (p *httpProvider) searchFC2(ctx context.Context, id string) ([]Parsed, erro
 	if err != nil {
 		return nil, err
 	}
+	if doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body)); err == nil {
+		if value, ok := doc.Find(`iframe[data-iframe="description"]`).First().Attr("src"); ok {
+			if ref, err := url.Parse(strings.TrimSpace(value)); err == nil {
+				address := endpoint.ResolveReference(ref)
+				if ref.User == nil && strings.EqualFold(address.Host, p.base.Host) && address.Path == "/widget/article/"+number+"/description" && (address.Scheme == "http" || address.Scheme == "https") {
+					if details, _, err := p.get(ctx, address.String(), http.Header{"Referer": {endpoint.String()}}); err == nil {
+						if description, err := goquery.NewDocumentFromReader(bytes.NewReader(details)); err == nil && !isSourceChallenge(details) {
+							description.Find("script, style, noscript").Remove()
+							item.Item.Description = strings.TrimSpace(description.Find("body").Text())
+						}
+					}
+				}
+			}
+		}
+	}
 	return []Parsed{item}, nil
 }
 
 func (p *httpProvider) get(ctx context.Context, target string, headers http.Header) ([]byte, int, error) {
-	if p.limiter != nil {
-		if err := p.limiter.Wait(ctx); err != nil {
-			return nil, 0, err
+	return p.request(ctx, http.MethodGet, target, headers, nil)
+}
+
+func (p *httpProvider) request(ctx context.Context, method, target string, headers http.Header, body []byte) ([]byte, int, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		var waitErr error
+		if p.settings.RequestLimiter != nil {
+			waitErr = p.settings.RequestLimiter.Wait(ctx, p.kind)
+		} else {
+			waitErr = p.gate.wait(ctx)
 		}
+		if waitErr != nil {
+			return nil, 0, waitErr
+		}
+		req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
+		if err != nil {
+			return nil, 0, errors.New("invalid source request")
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "ja,en-US;q=0.8,en;q=0.7")
+		if p.base != nil && strings.EqualFold(req.URL.Host, p.base.Host) {
+			req.Header.Set("Referer", p.base.Scheme+"://"+p.base.Host+"/")
+			if method == http.MethodPost {
+				req.Header.Set("Origin", p.base.Scheme+"://"+p.base.Host)
+			}
+		}
+		for key, values := range headers {
+			req.Header[key] = append([]string(nil), values...)
+		}
+		if p.base != nil && strings.EqualFold(req.URL.Host, p.base.Host) {
+			if p.kind == "jable" && p.settings.JableCookie != "" {
+				req.Header.Set("Cookie", p.settings.JableCookie)
+			}
+			if p.kind == "javlibrary" && p.settings.JavLibraryCookie != "" {
+				req.Header.Set("Cookie", p.settings.JavLibraryCookie)
+			}
+		}
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return nil, 0, requestError(err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			delay := retryAfter(resp.Header.Get("Retry-After"), time.Now())
+			resp.Body.Close()
+			if p.settings.RequestLimiter != nil {
+				if err := p.settings.RequestLimiter.Pause(ctx, p.kind, time.Now().Add(delay)); err != nil {
+					return nil, 0, err
+				}
+			} else {
+				p.gate.deferUntil(time.Now().Add(delay))
+			}
+			if attempt == 2 {
+				return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode}
+			}
+			if p.settings.RequestLimiter == nil && p.gate == nil && delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, 0, ctx.Err()
+				case <-timer.C:
+				}
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode}
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+		resp.Body.Close()
+		if readErr != nil || len(data) > 8<<20 {
+			return nil, resp.StatusCode, errors.New("source response too large or unreadable")
+		}
+		return data, resp.StatusCode, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, 0, errors.New("invalid source request")
+	return nil, http.StatusTooManyRequests, &RequestError{Reason: "http", Status: http.StatusTooManyRequests}
+}
+
+func retryAfter(value string, now time.Time) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
 	}
-	if headers != nil {
-		req.Header = headers.Clone()
+	if deadline, err := http.ParseTime(value); err == nil && deadline.After(now) {
+		return deadline.Sub(now)
 	}
-	if p.kind == "jable" && p.settings.JableCookie != "" {
-		req.Header.Set("Cookie", p.settings.JableCookie)
-	}
-	if p.kind == "javlibrary" && p.settings.JavLibraryCookie != "" {
-		req.Header.Set("Cookie", p.settings.JavLibraryCookie)
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, 0, requestError(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
-	if err != nil || len(body) > 8<<20 {
-		return nil, resp.StatusCode, errors.New("source response too large or unreadable")
-	}
-	return body, resp.StatusCode, nil
+	return time.Second
 }

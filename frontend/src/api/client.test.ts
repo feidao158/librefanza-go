@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError, setAccessToken } from './client'
+import { api, ApiError, restoreSession, setAccessToken } from './client'
 
 describe('API client', () => {
   afterEach(() => {
@@ -22,15 +22,36 @@ describe('API client', () => {
     await expect(api('/movies/unknown')).rejects.toMatchObject({ status: 404, code: 'not_found' } satisfies Partial<ApiError>)
   })
 
-  it('refreshes an expired token before logging out', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 'unauthorized' } }), { status: 401 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { access_token: 'new-token' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    vi.stubGlobal('fetch', fetchMock)
+  it('persists the same token for session restoration', async () => {
+    setAccessToken('persistent-token')
+    expect(window.localStorage.getItem('librefanza-access-token')).toBe('persistent-token')
+    await expect(restoreSession()).resolves.toBe(true)
+  })
+
+  it('retains the token during a temporary service failure', async () => {
+    setAccessToken('persistent-token')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 503 })))
+    await expect(api('/auth/me')).rejects.toMatchObject({ status: 503 })
+    expect(window.localStorage.getItem('librefanza-access-token')).toBe('persistent-token')
+  })
+
+  it('clears an invalid token without calling a refresh endpoint', async () => {
     setAccessToken('expired-token')
-    await expect(api('/auth/sessions/current', { method: 'DELETE' })).resolves.toEqual({ data: undefined })
-    expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(new Headers((fetchMock.mock.calls[2][1] as RequestInit).headers).get('Authorization')).toBe('Bearer new-token')
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(api('/auth/me')).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(window.localStorage.getItem('librefanza-access-token')).toBeNull()
+  })
+
+  it('does not erase a newer token when an old request fails', async () => {
+    setAccessToken('old-token')
+    let finish!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise<Response>(resolve => { finish = resolve })))
+    const request = api('/auth/me')
+    window.localStorage.setItem('librefanza-access-token', 'new-token')
+    finish(new Response('{}', { status: 401 }))
+    await expect(request).rejects.toMatchObject({ status: 401 })
+    expect(window.localStorage.getItem('librefanza-access-token')).toBe('new-token')
   })
 })

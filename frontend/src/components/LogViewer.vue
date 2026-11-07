@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { RefreshCw, Search } from 'lucide-vue-next'
 import { api } from '../api/client'
 import Pagination from './Pagination.vue'
@@ -20,7 +20,8 @@ interface LogEntry {
   position: number
 }
 
-const filters = reactive({ level: '', source: '', task_id: '' })
+const props = withDefaults(defineProps<{ taskId?: string }>(), { taskId: '' })
+const filters = reactive({ level: '', source: '', task_id: props.taskId })
 const entries = ref<LogEntry[]>([])
 const page = ref(1)
 const total = ref(0)
@@ -53,6 +54,7 @@ function formatTime(value: string) {
 }
 
 onMounted(load)
+watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; void load() })
 </script>
 
 <template>

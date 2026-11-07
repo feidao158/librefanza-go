@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -27,31 +28,34 @@ type Movie struct {
 }
 
 type SourceItem struct {
-	ID                uint64     `json:"id"`
-	Source            string     `json:"source"`
-	ExternalID        string     `json:"external_id"`
-	NormalizedID      string     `json:"normalized_id"`
-	SourcePageID      *uint64    `json:"source_page_id,omitempty"`
-	Priority          int        `json:"priority"`
-	Title             string     `json:"title"`
-	ReleaseDate       *time.Time `json:"release_date"`
-	Description       string     `json:"description"`
-	SourceURL         string     `json:"source_url"`
-	CoverImageURL     string     `json:"cover_image_url"`
-	ThumbnailImageURL string     `json:"thumbnail_image_url"`
-	MetadataJSON      string     `json:"-"`
-	RawJSON           string     `json:"-"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                 uint64     `json:"id"`
+	Source             string     `json:"source"`
+	ExternalID         string     `json:"external_id"`
+	NormalizedID       string     `json:"normalized_id"`
+	SourcePageID       *uint64    `json:"source_page_id,omitempty"`
+	Priority           int        `json:"priority"`
+	Title              string     `json:"title"`
+	ReleaseDate        *time.Time `json:"release_date"`
+	Description        string     `json:"description"`
+	SourceURL          string     `json:"source_url"`
+	CoverImageURL      string     `json:"cover_image_url"`
+	ThumbnailImageURL  string     `json:"thumbnail_image_url"`
+	MetadataJSON       string     `json:"-"`
+	RawJSON            string     `json:"-"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	CoverImageOverride bool       `json:"-" gorm:"-"`
 }
 
 func (item SourceItem) MarshalJSON() ([]byte, error) {
 	type sourceItemAlias SourceItem
+	originalCover := ""
 	if item.Source == "sod" {
-		if images.AllowedSODURL(item.CoverImageURL) {
+		if !item.CoverImageOverride && images.AllowedSODURL(item.CoverImageURL) {
+			originalCover = item.CoverImageURL
 			item.CoverImageURL = fmt.Sprintf("/api/v1/source-items/%d/images/cover", item.ID)
 		}
-		if images.AllowedSODURL(item.ThumbnailImageURL) {
+		if !item.CoverImageOverride && images.AllowedSODURL(item.ThumbnailImageURL) {
 			item.ThumbnailImageURL = fmt.Sprintf("/api/v1/source-items/%d/images/thumbnail", item.ID)
 		}
 	}
@@ -59,10 +63,36 @@ func (item SourceItem) MarshalJSON() ([]byte, error) {
 	if !json.Valid(metadata) || len(metadata) == 0 || string(metadata) == "null" {
 		metadata = json.RawMessage(`{}`)
 	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(metadata, &fields) == nil && fields != nil {
+		var samples []string
+		if json.Unmarshal(fields["sample_image_urls"], &samples) == nil {
+			originals := make([]string, len(samples))
+			proxied := false
+			for i, address := range samples {
+				parsed, err := url.Parse(address)
+				if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+					samples[i] = ""
+					continue
+				}
+				originals[i] = address
+				if images.AllowedSourceURL(item.Source, address) {
+					samples[i] = fmt.Sprintf("/api/v1/source-items/%d/images/samples/%d", item.ID, i)
+					proxied = true
+				}
+			}
+			fields["sample_image_urls"], _ = json.Marshal(samples)
+			if proxied {
+				fields["sample_image_original_urls"], _ = json.Marshal(originals)
+			}
+			metadata, _ = json.Marshal(fields)
+		}
+	}
 	return json.Marshal(struct {
 		sourceItemAlias
-		Metadata json.RawMessage `json:"metadata"`
-	}{sourceItemAlias: sourceItemAlias(item), Metadata: metadata})
+		Metadata      json.RawMessage `json:"metadata"`
+		OriginalCover string          `json:"cover_image_original_url,omitempty"`
+	}{sourceItemAlias: sourceItemAlias(item), Metadata: metadata, OriginalCover: originalCover})
 }
 
 type Actress struct {
@@ -152,9 +182,6 @@ func (r *Repository) SourceItem(ctx context.Context, id uint64) (SourceItem, err
 	if err := r.db.WithContext(ctx).Where("normalized_id = ? AND is_hidden = ?", item.NormalizedID, false).First(&movie).Error; err != nil {
 		return SourceItem{}, err
 	}
-	if movie.CoverImageURL != "" {
-		item.CoverImageURL, item.ThumbnailImageURL = movie.CoverImageURL, movie.CoverImageURL
-	}
 	items := []SourceItem{item}
 	if err := r.redactHiddenActresses(ctx, items); err != nil {
 		return SourceItem{}, err
@@ -186,11 +213,13 @@ func (r *Repository) populate(ctx context.Context, movies []Movie, includeVersio
 		items := groups[movies[i].NormalizedID]
 		sort.SliceStable(items, func(a, b int) bool { return preferredBefore(items[a], items[b]) })
 		if len(items) != 0 {
+			preferred := items[0]
 			if movies[i].CoverImageURL != "" {
-				items[0].CoverImageURL = movies[i].CoverImageURL
-				items[0].ThumbnailImageURL = movies[i].CoverImageURL
+				preferred.CoverImageURL = movies[i].CoverImageURL
+				preferred.ThumbnailImageURL = movies[i].CoverImageURL
+				preferred.CoverImageOverride = true
 			}
-			movies[i].PreferredItem = &items[0]
+			movies[i].PreferredItem = &preferred
 			if includeVersions {
 				movies[i].Versions = items
 			}

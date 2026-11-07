@@ -40,7 +40,7 @@ func (m *Manager) logExecution(ctx context.Context, job *jobs.Job, next func(con
 		entry.Source = strings.TrimSuffix(job.Type, "_crawl")
 	}
 	ctx = context.WithValue(ctx, jobLogContextKey{}, entry)
-	if job.Type != "maintenance_tick" {
+	if job.Type != "maintenance_tick" && job.Type != "metadata_backfill_tick" {
 		started := entry
 		started.Level, started.Event = "info", "task_started"
 		m.logs.Record(ctx, started)
@@ -50,7 +50,7 @@ func (m *Manager) logExecution(ctx context.Context, job *jobs.Job, next func(con
 		entry.Level, entry.Event = "error", "task_failed"
 		logbook.ApplyFailure(&entry, err)
 		m.logs.Record(ctx, entry)
-	} else if job.Type != "maintenance_tick" {
+	} else if job.Type != "maintenance_tick" && job.Type != "metadata_backfill_tick" {
 		entry.Level, entry.Event = "info", "task_completed"
 		m.logs.Record(ctx, entry)
 	}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPProviders(t *testing.T) {
@@ -51,6 +52,72 @@ func TestHTTPProviders(t *testing.T) {
 	}
 }
 
+func TestSourceRequestsUseBrowserHeadersAndRetryRateLimit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.UserAgent(), "Mozilla/") || !strings.Contains(r.Header.Get("Accept"), "text/html") || r.Header.Get("Accept-Language") == "" {
+			t.Errorf("missing browser request headers")
+		}
+		requests++
+		if requests == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprint(w, "ok")
+	}))
+	defer server.Close()
+	providers, err := NewProviders(ClientSettings{FC2URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := providers[3].(*httpProvider)
+	body, _, err := provider.get(context.Background(), server.URL, nil)
+	if err != nil || string(body) != "ok" || requests != 2 {
+		t.Fatalf("requests=%d body=%q err=%v", requests, body, err)
+	}
+}
+
+func TestFC2FetchesDescriptionFromItsOwnFrame(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/article/123/":
+			fmt.Fprint(w, `<div class="items_article_headerInfo"><h3>FC2 title</h3></div><iframe data-iframe="description" src="/widget/article/123/description"></iframe>`)
+		case "/widget/article/123/description":
+			fmt.Fprint(w, `<div>　作品简介　<script>unsafe text</script></div>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	providers, err := NewProviders(ClientSettings{FC2URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := providers[3].Search(context.Background(), "FC2-123")
+	if err != nil || len(items) != 1 || items[0].Item.Description != "作品简介" {
+		t.Fatalf("description missing or unsafe: %v", err)
+	}
+}
+
+func TestSourceCookieIsNotSentToOtherHosts(t *testing.T) {
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != "" {
+			t.Error("source session leaked to another host")
+		}
+		fmt.Fprint(w, "ok")
+	}))
+	defer foreign.Close()
+	providers, err := NewProviders(ClientSettings{JableURL: "https://jable.example/", JableCookie: "session=secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := providers[6].(*httpProvider)
+	if _, _, err := provider.get(context.Background(), foreign.URL, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMGStageSearchUsesOriginalFixtures(t *testing.T) {
 	searchPage, err := os.ReadFile(filepath.Join("testdata", "mgstage-search.html"))
 	if err != nil {
@@ -88,6 +155,10 @@ func TestCrawlFanzaUsesDateRange(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("gte_date") == "" || r.URL.Query().Get("lte_date") == "" || r.URL.Query().Get("sort") != "date" {
 			t.Errorf("missing crawl range: %s", r.URL.RawQuery)
+		}
+		location, _ := time.LoadLocation("America/Los_Angeles")
+		if !strings.HasPrefix(r.URL.Query().Get("gte_date"), time.Now().In(location).Format("2006-01-02")) {
+			t.Error("crawl range does not include current day")
 		}
 		requests++
 		fmt.Fprint(w, `{"result":{"result_count":1,"total_count":1,"first_position":1,"items":[{"content_id":"abc00123","title":"Fanza item"}]}}`)

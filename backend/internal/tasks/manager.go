@@ -45,14 +45,15 @@ type cooldown struct {
 func (cooldown) TableName() string { return "search_cooldowns" }
 
 type Manager struct {
-	db      *gorm.DB
-	storage *jobs.GormStorage
-	queue   *jobs.Queue
-	worker  *jobs.Worker
-	logs    *logbook.Recorder
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
+	db              *gorm.DB
+	storage         *jobs.GormStorage
+	queue           *jobs.Queue
+	worker          *jobs.Worker
+	logs            *logbook.Recorder
+	enrichmentReady bool
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	done            chan struct{}
 }
 
 func NewManager(db *gorm.DB, search SearchFunc) (*Manager, error) {
@@ -83,6 +84,11 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 			if err != nil {
 				return Result{}, err
 			}
+			if found && manager.enrichmentReady {
+				if _, err := manager.EnqueueEnrichment(ctx, args.ID); err != nil {
+					return Result{}, err
+				}
+			}
 			entry := cooldown{NormalizedID: args.ID, SearchedAt: time.Now().UTC()}
 			if err := db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "normalized_id"}}, DoUpdates: clause.AssignmentColumns([]string{"searched_at"})}).Create(&entry).Error; err != nil {
 				return Result{}, err
@@ -92,6 +98,8 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 	})
 	options := []jobs.WorkerOption{
 		jobs.WorkerQueue("default", jobs.Concurrency(4)),
+		jobs.WorkerQueue("metadata", jobs.Concurrency(1)),
+		jobs.WorkerQueue("backfill", jobs.Concurrency(1)),
 		jobs.WithPollInterval(200 * time.Millisecond),
 		jobs.WithScheduler(true),
 		jobs.WithDrainTimeout(5 * time.Second),

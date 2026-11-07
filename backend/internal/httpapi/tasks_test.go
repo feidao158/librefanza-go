@@ -20,6 +20,10 @@ type failingTasks struct {
 	err error
 }
 
+func (f failingTasks) EnrichmentStatus(context.Context, string) (tasks.MetadataStatus, error) {
+	return tasks.MetadataStatus{}, f.err
+}
+
 func (f failingTasks) Get(context.Context, string) (tasks.Status, error) {
 	return tasks.Status{}, f.err
 }
@@ -71,5 +75,22 @@ func TestSearchJobLookupDistinguishesMissingFromDatabaseFailure(t *testing.T) {
 				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestMetadataJobLookupDistinguishesMissingFromDatabaseFailure(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		status int
+	}{{tasks.ErrJobNotFound, http.StatusNotFound}, {errors.New("database unavailable"), http.StatusServiceUnavailable}} {
+		service := setup.NewService(config.NewStore(t.TempDir()), setupBackend{})
+		router := NewRouter(service)
+		RegisterTaskRoutes(router, nil, func(context.Context) (TaskService, error) { return failingTasks{err: test.err}, nil })
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/movies/ABC-123/metadata-job", nil))
+		service.Close()
+		if response.Code != test.status {
+			t.Fatalf("metadata status = %d", response.Code)
+		}
 	}
 }

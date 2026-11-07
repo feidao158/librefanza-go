@@ -22,7 +22,7 @@ async function submit() {
     else await auth.login(email.value, password.value)
     await router.push('/')
   } catch (err) {
-    error.value = err instanceof ApiError && err.code === 'account_exists' ? 'auth.accountExists' : 'auth.invalid'
+    error.value = err instanceof ApiError && err.code === 'account_exists' ? 'auth.accountExists' : err instanceof ApiError && err.status === 401 ? 'auth.invalid' : 'common.error'
   } finally { loading.value = false }
 }
 </script>

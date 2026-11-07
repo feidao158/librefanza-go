@@ -1,17 +1,18 @@
 import { expect, test } from '@playwright/test'
 
 test('管理员可以按范围启动来源采集', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'test'))
   const schedule = { timezone: 'Asia/Shanghai', actress: { enabled: true, cron: '0 0 * * *' }, fanza: { enabled: true, cron: '0 1 * * *' }, mgstage: { enabled: true, cron: '0 2 * * *' }, jable: { enabled: false, cron: '0 3 * * *' }, avmoo: { enabled: false, cron: '0 4 * * *' }, javlibrary: { enabled: false, cron: '0 5 * * *' }, libredmm: { enabled: false, cron: '0 6 * * *' } }
   let submitted: Record<string, unknown> | undefined
   await page.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path.endsWith('/setup')) data = { installed: true }
-    else if (path.endsWith('/auth/refresh')) data = { access_token: 'test' }
     else if (path.endsWith('/auth/me')) data = { id: 1, email: 'admin@example.com', is_admin: true }
     else if (path.endsWith('/settings/schedules')) data = schedule
     else if (path.endsWith('/schedule-previews')) data = { fanza: '2026-11-07T01:00:00+08:00' }
     else if (path.endsWith('/admin/jobs')) data = []
+    else if (path.endsWith('/admin/metadata-backfill')) data = { progress: { phase: 'raw', processed: 0, failed: 0, completed: true }, failed_jobs: 0 }
     else if (path.endsWith('/admin/crawl-jobs')) { submitted = route.request().postDataJSON(); data = { id: 'test-job' } }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data }) })
   })
@@ -28,10 +29,32 @@ test('管理员可以按范围启动来源采集', async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
+test('管理员可以将来源周期设为每30分钟', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'test'))
+  let saved: any
+  const schedule = { timezone: 'Asia/Shanghai', actress: { enabled: true, cron: '0 0 * * *' }, fanza: { enabled: true, cron: '0 1 * * *' }, mgstage: { enabled: false, cron: '0 2 * * *' }, jable: { enabled: false, cron: '0 3 * * *' }, avmoo: { enabled: false, cron: '0 4 * * *' }, javlibrary: { enabled: false, cron: '0 5 * * *' }, libredmm: { enabled: false, cron: '0 6 * * *' } }
+  await page.route('**/api/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    let data: unknown = {}
+    if (path.endsWith('/setup')) data = { installed: true }
+    else if (path.endsWith('/auth/me')) data = { id: 1, email: 'admin@example.com', is_admin: true }
+    else if (path.endsWith('/settings/schedules')) { if (route.request().method() === 'PUT') saved = route.request().postDataJSON(); data = schedule }
+    else if (path.endsWith('/admin/jobs')) data = []
+    else if (path.endsWith('/admin/metadata-backfill')) data = { progress: { phase: 'raw', processed: 0, failed: 0, completed: true }, failed_jobs: 0 }
+    return route.fulfill({ json: { data } })
+  })
+  await page.goto('/admin/schedule')
+  const row = page.locator('.crawl-row').filter({ hasText: 'Fanza' })
+  await row.getByLabel('执行频率').first().selectOption('interval')
+  await row.getByLabel('执行频率').nth(1).selectOption('30')
+  await page.getByRole('button', { name: '保存' }).click()
+  await expect.poll(() => saved?.fanza?.cron).toBe('*/30 * * * *')
+  expect(saved.mgstage.enabled).toBe(false)
+})
+
 test('影片播放按需检索并呈现来源不可用状态', async ({ page }) => {
   await page.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
-    if (path.endsWith('/auth/refresh')) return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' })
     let data: unknown = {}
     if (path.endsWith('/setup')) data = { installed: true }
     else if (path.endsWith('/movies/ABC-123/playbacks')) data = []
@@ -47,7 +70,6 @@ test('直连失败后尝试服务器转发', async ({ page }) => {
   await page.route('https://cdn.invalid/**', route => route.abort())
   await page.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
-    if (path.endsWith('/auth/refresh')) return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' })
     if (path.includes('/playback/relay/')) return route.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:8,\nsegment.ts\n#EXT-X-ENDLIST\n' })
     let data: unknown = {}
     if (path.endsWith('/setup')) data = { installed: true }

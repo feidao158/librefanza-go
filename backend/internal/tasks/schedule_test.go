@@ -43,6 +43,8 @@ func TestNextScheduleUsesConfiguredTimezone(t *testing.T) {
 
 func TestDueSchedulesUseConfiguredTimeZone(t *testing.T) {
 	settings := DefaultScheduleSettings()
+	settings.Fanza.Cron = "0 1 * * *"
+	settings.MGStage.Cron = "0 2 * * *"
 	when := time.Date(2026, 1, 10, 9, 0, 10, 0, time.UTC)
 	got, err := DueSchedules(settings, when)
 	if err != nil || !reflect.DeepEqual(got, []string{"fanza_crawl"}) {
@@ -56,5 +58,12 @@ func TestDueSchedulesUseConfiguredTimeZone(t *testing.T) {
 	settings.Timezone = "not/a-zone"
 	if _, err := DueSchedules(settings, when); err == nil {
 		t.Fatal("invalid timezone accepted")
+	}
+}
+
+func TestDefaultEnabledMovieSchedulesRunEveryHalfHour(t *testing.T) {
+	settings := DefaultScheduleSettings()
+	if settings.Fanza.Cron != "*/30 * * * *" || settings.MGStage.Cron != "*/30 * * * *" || settings.Actress.Cron != "0 0 * * *" {
+		t.Fatalf("unexpected default schedules: %+v", settings)
 	}
 }

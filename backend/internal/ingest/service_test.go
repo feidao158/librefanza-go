@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,9 +66,11 @@ func TestSaveUpdatesPreferredMovieAndIsIdempotent(t *testing.T) {
 	defer db.Where("normalized_id = ?", id).Delete(&catalog.SourceItem{})
 	service := NewService(db)
 	sod := sources.Parsed{Item: catalog.SourceItem{Source: "sod", ExternalID: id, NormalizedID: id, Title: "SOD", MetadataJSON: `{"cast":[{"name":"演员甲"}]}`}}
-	fanza := sources.Parsed{Item: catalog.SourceItem{Source: "fanza", ExternalID: id, NormalizedID: id, Title: "Fanza", Description: "作品简介", MetadataJSON: `{"cast":[{"name":"演员乙"}]}`}}
+	fanza := sources.Parsed{Item: catalog.SourceItem{Source: "fanza", ExternalID: id, NormalizedID: id, Title: "Fanza", Description: "作品简介", CoverImageURL: "https://example.com/cover.jpg", MetadataJSON: `{"cast":[{"name":"演员乙"}],"sample_image_urls":["https://example.com/sample.jpg"]}`}}
 	updated := fanza
 	updated.Item.Description = ""
+	updated.Item.CoverImageURL = ""
+	updated.Item.MetadataJSON = `{"cast":[],"sample_image_urls":[]}`
 	for _, item := range []sources.Parsed{sod, fanza, updated} {
 		if err := service.Save(context.Background(), item); err != nil {
 			t.Fatal(err)
@@ -76,6 +79,9 @@ func TestSaveUpdatesPreferredMovieAndIsIdempotent(t *testing.T) {
 	movie, err := catalog.NewRepository(db).Movie(context.Background(), id)
 	if err != nil || movie.PreferredItem.Title != "Fanza" || movie.PreferredItem.Description != "作品简介" || len(movie.Versions) != 2 {
 		t.Fatalf("movie=%+v err=%v", movie, err)
+	}
+	if movie.PreferredItem.CoverImageURL == "" || !strings.Contains(movie.PreferredItem.MetadataJSON, "sample.jpg") {
+		t.Fatal("partial source response erased existing metadata")
 	}
 	var names []string
 	if err := db.Table("movie_cast").Where("movie_id = ?", movie.ID).Pluck("name", &names).Error; err != nil || len(names) != 1 || names[0] != "演员乙" {

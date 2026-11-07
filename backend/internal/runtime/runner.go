@@ -114,6 +114,30 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 		}
 		return sources.RunCrawl(ctx, request, source, ingest.NewService(db), progress, save)
 	})
+	if err := manager.ConfigureMetadata(func(ctx context.Context, id, source string) (bool, error) {
+		cfg, err := settings.NewService(db).Sources(ctx)
+		if err != nil {
+			return false, err
+		}
+		providers, err := sources.NewProviders(cfg)
+		if err != nil {
+			return false, err
+		}
+		for _, provider := range providers {
+			if named, ok := provider.(interface{ SourceName() string }); ok && named.SourceName() == source {
+				return sources.Search(ctx, id, []sources.Provider{provider}, ingest.NewService(db))
+			}
+		}
+		return false, errors.New("invalid metadata source")
+	}, func(ctx context.Context, item catalog.SourceItem) error {
+		err := ingest.NewService(db).ReparseSaved(ctx, item)
+		if errors.Is(err, ingest.ErrStoredSourceInvalid) {
+			return tasks.ErrStoredSourceInvalid
+		}
+		return err
+	}); err != nil {
+		return nil, err
+	}
 	if err := manager.ConfigureMaintenance(func(ctx context.Context) (tasks.ScheduleSettings, error) {
 		return settings.NewService(db).Schedules(ctx)
 	}, map[string]func(context.Context) error{
@@ -122,6 +146,9 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 		"actress_crawl":  func(ctx context.Context) error { return maintain(ctx, "actress_crawl") },
 		"rebuild_movies": func(ctx context.Context) error { return maintain(ctx, "rebuild_movies") },
 	}); err != nil {
+		return nil, err
+	}
+	if err := manager.EnsureBackfill(ctx); err != nil {
 		return nil, err
 	}
 	if err := manager.Start(r.ctx); err != nil {
@@ -141,7 +168,9 @@ func (r *Runner) Run() {
 		manager, err := r.Manager(r.ctx)
 		if err != nil && r.ctx.Err() == nil && !errors.Is(err, database.ErrNotInstalled) {
 			if err.Error() != lastError {
-				logs.Record(r.ctx, logbook.Entry{Level: "error", Event: "worker_start_failed", Reason: "unknown"})
+				entry := logbook.Entry{Level: "error", Event: "worker_start_failed"}
+				logbook.ApplyFailure(&entry, err)
+				logs.Record(r.ctx, entry)
 				lastError = err.Error()
 			}
 		} else if err == nil {

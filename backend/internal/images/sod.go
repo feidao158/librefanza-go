@@ -20,11 +20,32 @@ func AllowedSODURL(value string) bool {
 }
 
 func FetchSOD(ctx context.Context, client *http.Client, imageURL, referer string) ([]byte, string, error) {
-	if !AllowedSODURL(imageURL) {
+	return FetchSourceImage(ctx, client, "sod", imageURL, referer)
+}
+
+func AllowedSourceURL(source, value string) bool {
+	if source == "sod" {
+		return AllowedSODURL(value)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" && parsed.Port() != "443" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return source == "mgstage" && (host == "image.mgstage.com" || strings.HasSuffix(host, ".image.mgstage.com"))
+}
+
+func FetchSourceImage(ctx context.Context, client *http.Client, source, imageURL, referer string) ([]byte, string, error) {
+	if !AllowedSourceURL(source, imageURL) {
 		return nil, "", errors.New("unsupported image host")
 	}
 	ref, err := url.Parse(referer)
-	if err != nil || (ref.Scheme != "https" && ref.Scheme != "http") || !strings.EqualFold(ref.Hostname(), "ec.sod.co.jp") {
+	validRef := err == nil && (ref.Scheme == "https" || ref.Scheme == "http") && ref.User == nil
+	if validRef {
+		host := strings.ToLower(ref.Hostname())
+		validRef = source == "sod" && host == "ec.sod.co.jp" || source == "mgstage" && (host == "mgstage.com" || strings.HasSuffix(host, ".mgstage.com"))
+	}
+	if !validRef {
 		return nil, "", errors.New("invalid image referer")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
@@ -33,9 +54,11 @@ func FetchSOD(ctx context.Context, client *http.Client, imageURL, referer string
 	}
 	request.Header.Set("Referer", referer)
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	response, err := client.Do(request)
+	safeClient := *client
+	safeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safeClient.Do(request)
 	if err != nil {
 		return nil, "", errors.New("image request failed")
 	}

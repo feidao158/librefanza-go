@@ -117,6 +117,38 @@ func registerCatalogRoutes(api *gin.RouterGroup, provider *database.Provider, ca
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Data(http.StatusOK, contentType, body)
 	})
+	api.GET("/source-items/:id/images/samples/:index", func(c *gin.Context) {
+		repo := repository(c)
+		if repo == nil {
+			return
+		}
+		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+		index, indexErr := strconv.Atoi(c.Param("index"))
+		if err != nil || indexErr != nil || index < 0 {
+			respondError(c, http.StatusNotFound, "not_found")
+			return
+		}
+		item, err := repo.SourceItem(c.Request.Context(), id)
+		if err != nil {
+			respondError(c, http.StatusNotFound, "not_found")
+			return
+		}
+		var metadata struct {
+			Samples []string `json:"sample_image_urls"`
+		}
+		if json.Unmarshal([]byte(item.MetadataJSON), &metadata) != nil || index >= len(metadata.Samples) {
+			respondError(c, http.StatusNotFound, "not_found")
+			return
+		}
+		body, contentType, err := images.FetchSourceImage(c.Request.Context(), nil, item.Source, metadata.Samples[index], item.SourceURL)
+		if err != nil {
+			respondError(c, http.StatusBadGateway, "image_unavailable")
+			return
+		}
+		c.Header("Cache-Control", "private, max-age=60")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Data(http.StatusOK, contentType, body)
+	})
 	api.GET("/actresses", func(c *gin.Context) {
 		repo := repository(c)
 		if repo == nil {

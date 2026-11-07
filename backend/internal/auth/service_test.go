@@ -14,7 +14,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/database"
 )
 
-func TestAuthenticationAndRefreshAgainstDatabase(t *testing.T) {
+func TestAuthenticationRenewsPersistentTokenAgainstDatabase(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {
 		t.Skip("需要设置测试数据库连接")
@@ -44,24 +44,44 @@ func TestAuthenticationAndRefreshAgainstDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if tokens.ExpiresIn != 30*24*60*60 {
+		t.Fatalf("unexpected login lifetime: %d", tokens.ExpiresIn)
+	}
+	oldExpiry := time.Now().UTC().Add(time.Hour)
+	if err := db.Model(&session{}).Where("access_hash = ?", tokenHash(tokens.AccessToken)).Update("access_expires_at", oldExpiry).Error; err != nil {
+		t.Fatal(err)
+	}
 	user, err := service.Authenticate(context.Background(), tokens.AccessToken)
 	if err != nil || user.Email != email || user.IsAdmin {
 		t.Fatalf("authentication: user=%+v err=%v", user, err)
 	}
-	rotated, err := service.Refresh(context.Background(), tokens.RefreshToken)
-	if err != nil || rotated.AccessToken == tokens.AccessToken || rotated.RefreshToken == tokens.RefreshToken {
-		t.Fatalf("refresh failed: %v", err)
+	var renewed session
+	if err := db.Where("access_hash = ?", tokenHash(tokens.AccessToken)).First(&renewed).Error; err != nil || renewed.AccessExpiresAt.Before(time.Now().UTC().Add(29*24*time.Hour)) {
+		t.Fatalf("session was not renewed: %+v, %v", renewed, err)
 	}
-	if _, err := service.Refresh(context.Background(), tokens.RefreshToken); err == nil {
-		t.Fatal("old refresh token was accepted")
+	if _, err := service.Authenticate(context.Background(), tokens.AccessToken); err != nil {
+		t.Fatalf("same token was invalidated by another request: %v", err)
 	}
-	if _, err := service.Authenticate(context.Background(), tokens.AccessToken); err == nil {
-		t.Fatal("old access token was accepted")
-	}
-	if err := service.Logout(context.Background(), rotated.AccessToken); err != nil {
+	passiveExpiry := time.Now().UTC().Add(time.Hour)
+	if err := db.Model(&session{}).Where("access_hash = ?", tokenHash(tokens.AccessToken)).Update("access_expires_at", passiveExpiry).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Authenticate(context.Background(), rotated.AccessToken); err == nil {
+	if _, err := service.AuthenticateWithActivity(context.Background(), tokens.AccessToken, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("access_hash = ?", tokenHash(tokens.AccessToken)).First(&renewed).Error; err != nil || renewed.AccessExpiresAt.After(passiveExpiry.Add(time.Second)) {
+		t.Fatal("passive request renewed session")
+	}
+	if err := db.Model(&session{}).Where("access_hash = ?", tokenHash(tokens.AccessToken)).Update("access_expires_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(context.Background(), tokens.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("expired token was accepted")
+	}
+	if err := service.Logout(context.Background(), tokens.AccessToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(context.Background(), tokens.AccessToken); err == nil {
 		t.Fatal("logged-out token was accepted")
 	}
 }

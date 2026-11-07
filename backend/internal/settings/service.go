@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/libredmm/librefanza/backend/internal/config"
+	"github.com/libredmm/librefanza/backend/internal/database"
 	"github.com/libredmm/librefanza/backend/internal/mailer"
 	"github.com/libredmm/librefanza/backend/internal/setup"
 	"github.com/libredmm/librefanza/backend/internal/sources"
@@ -53,6 +54,7 @@ func (s *Service) save(ctx context.Context, name string, value any) error {
 func (s *Service) Sources(ctx context.Context) (sources.ClientSettings, error) {
 	result := sources.ClientSettings{FanzaAPIID: os.Getenv("FANZA_API_ID"), FanzaAffiliateID: os.Getenv("FANZA_AFFILIATE_ID"), ProxyURL: os.Getenv("PROXY_URL"), FC2URL: os.Getenv("FC2_BASE_URL"), MGStageSeriesURL: os.Getenv("MGSTAGE_SERIES_URL")}
 	_, err := s.load(ctx, "sources", &result)
+	result.RequestLimiter = database.NewSourceRateLimiter(s.db)
 	return result, err
 }
 
