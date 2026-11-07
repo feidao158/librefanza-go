@@ -3,7 +3,7 @@ import { createI18n } from 'vue-i18n'
 const messages = {
   zh: {
     nav: { movies: '影片', actresses: '演员', annotations: '人工标注', recommendations: '猜你喜欢', manage: '管理', signIn: '登录', signOut: '退出登录', settings: '设置' },
-    common: { search: '搜索', filter: '筛选', save: '保存', cancel: '取消', back: '返回', next: '下一步', previous: '上一步', loading: '正在加载', retry: '重试', noResults: '没有找到结果', error: '操作未完成，请稍后重试', all: '全部', source: '来源', date: '发行日期', created: '创建时间', type: '类型', status: '状态', unknown: '未知', page: '第 {page} 页', total: '共 {count} 条', enabled: '启用', disabled: '停用', success: '已保存', actions: '操作', view: '查看', close: '关闭', yes: '是', no: '否', prevImage: '上一张', nextImage: '下一张', closePreview: '关闭预览', imageCount: '第 {current} / {total} 张', previewDetails: '详情预览' },
+    common: { search: '搜索', filter: '筛选', save: '保存', cancel: '取消', back: '返回', next: '下一步', previous: '上一步', loading: '正在加载', retry: '重试', noResults: '没有找到结果', error: '操作未完成，请稍后重试', all: '全部', source: '来源', date: '发行日期', created: '创建时间', type: '类型', status: '状态', unknown: '未知', page: '第 {page} 页', total: '共 {count} 条', enabled: '启用', disabled: '停用', success: '已保存', actions: '操作', view: '查看', close: '关闭', yes: '是', no: '否', prevImage: '上一张', nextImage: '下一张', closePreview: '关闭预览', imageCount: '第 {current} / {total} 张', previewDetails: '详情预览', prevMovie: '上一部', nextMovie: '下一部' },
     movies: { title: '影片', subtitle: '探索作品与来源', searchPlaceholder: '输入番号或前缀', latest: '最新发行', all: '浏览全部', contains: '包含', prefix: '前缀', order: '排序', byID: '番号', byDate: '发行日期', byAdded: '收录时间', noCover: '暂无封面', loadingCover: '封面加载中', notFound: '未收录此影片', searchSources: '从来源检索', searching: '正在检索来源', searchFailed: '检索未完成', cast: '演员', details: '影片信息', description: '简介', versions: '其他版本', visit: '访问来源', genres: '类别', labels: '厂牌', rating: '评分', makers: '制作商', directors: '导演', duration: '时长', minutes: '分钟', samples: '预览图片', copy: '复制番号', copied: '已复制', reSearch: '重新检索', cover: '封面地址', hide: '隐藏影片' },
     actresses: { title: '演员', subtitle: '按姓名浏览演员及作品', search: '输入演员姓名', newest: '最新收录', name: '姓名', works: '作品', solo: '单体作品', allWorks: '全部作品', noPhoto: '暂无照片' },
     annotations: {
@@ -38,6 +38,10 @@ const messages = {
       markUncertain: '不确定',
       feedbackRecorded: '已记录反馈',
       noRecommendations: '暂无推荐结果，去标注更多影片试试吧',
+      currentIndex: '推荐第 {current} / {total} 部',
+      shortcutHint: '快捷键: 1 喜欢 | 2 不确定 | 3 不喜欢 | ← 上一部 | → / 空格 下一部',
+      forYouBadge: '为你推荐',
+      queueTitle: '本轮推荐列表',
     },
     auth: { login: '登录', register: '注册', email: '电子邮箱', password: '密码', noAccount: '创建账号', hasAccount: '已有账号？登录', invalid: '邮箱或密码不正确', accountExists: '该邮箱已注册', logout: '退出登录', forgot: '忘记密码？', requestReset: '发送重置邮件', reset: '设置新密码', resetSent: '如果邮箱存在，重置邮件将发送至该邮箱。', resetDone: '密码已更新，请重新登录。' },
     setup: { title: '初始化 LibreFanza', database: '数据库', redis: 'Redis 缓存', admin: '管理员', driver: '数据库类型', host: '主机', port: '端口', name: '数据库名', user: '用户名', password: '密码', tls: '使用 TLS', test: '测试连接', connected: '连接成功', redisOptional: '启用 Redis', redisAddress: '地址', redisDB: '数据库编号', finish: '完成安装', installing: '正在初始化', failed: '连接或初始化失败，请检查配置', pending: '安装已开始，请使用原配置继续' },
@@ -55,7 +59,7 @@ const messages = {
   },
   en: {
     nav: { movies: 'Movies', actresses: 'Actresses', annotations: 'Annotations', recommendations: 'For You', manage: 'Manage', signIn: 'Sign in', signOut: 'Sign out', settings: 'Settings' },
-    common: { search: 'Search', filter: 'Filter', save: 'Save', cancel: 'Cancel', back: 'Back', next: 'Continue', previous: 'Previous', loading: 'Loading', retry: 'Retry', noResults: 'No results found', error: 'Something went wrong. Please try again.', all: 'All', source: 'Source', date: 'Release date', created: 'Created', type: 'Type', status: 'Status', unknown: 'Unknown', page: 'Page {page}', total: '{count} results', enabled: 'Enabled', disabled: 'Disabled', success: 'Saved', actions: 'Actions', view: 'View', close: 'Close', yes: 'Yes', no: 'No', prevImage: 'Previous', nextImage: 'Next', closePreview: 'Close preview', imageCount: '{current} of {total}', previewDetails: 'Preview details' },
+    common: { search: 'Search', filter: 'Filter', save: 'Save', cancel: 'Cancel', back: 'Back', next: 'Continue', previous: 'Previous', loading: 'Loading', retry: 'Retry', noResults: 'No results found', error: 'Something went wrong. Please try again.', all: 'All', source: 'Source', date: 'Release date', created: 'Created', type: 'Type', status: 'Status', unknown: 'Unknown', page: 'Page {page}', total: '{count} results', enabled: 'Enabled', disabled: 'Disabled', success: 'Saved', actions: 'Actions', view: 'View', close: 'Close', yes: 'Yes', no: 'No', prevImage: 'Previous', nextImage: 'Next', closePreview: 'Close preview', imageCount: '{current} of {total}', previewDetails: 'Preview details', prevMovie: 'Previous', nextMovie: 'Next' },
     movies: { title: 'Movies', subtitle: 'Explore titles and their sources', searchPlaceholder: 'Search an ID or prefix', latest: 'Latest releases', all: 'Browse all', contains: 'Contains', prefix: 'Starts with', order: 'Sort by', byID: 'Movie ID', byDate: 'Release date', byAdded: 'Date added', noCover: 'Cover unavailable', loadingCover: 'Loading cover', notFound: 'This movie is not indexed', searchSources: 'Search sources', searching: 'Searching sources', searchFailed: 'Search could not be completed', cast: 'Cast', details: 'Details', description: 'Description', versions: 'Other versions', visit: 'Visit source', genres: 'Genres', labels: 'Labels', rating: 'Rating', makers: 'Makers', directors: 'Directors', duration: 'Runtime', minutes: 'min', samples: 'Sample images', copy: 'Copy ID', copied: 'Copied', reSearch: 'Search again', cover: 'Cover URL', hide: 'Hide movie' },
     actresses: { title: 'Actresses', subtitle: 'Browse people and their films', search: 'Search by name', newest: 'Newest', name: 'Name', works: 'Filmography', solo: 'Solo titles', allWorks: 'All titles', noPhoto: 'Photo unavailable' },
     annotations: {
@@ -90,6 +94,10 @@ const messages = {
       markUncertain: 'Uncertain',
       feedbackRecorded: 'Feedback saved',
       noRecommendations: 'No recommendations available yet. Try annotating more movies!',
+      currentIndex: 'Recommended {current} of {total}',
+      shortcutHint: 'Shortcuts: 1 Like | 2 Uncertain | 3 Dislike | ← Prev | → / Space Next',
+      forYouBadge: 'For You',
+      queueTitle: 'Recommendation Queue',
     },
     auth: { login: 'Sign in', register: 'Create account', email: 'Email address', password: 'Password', noAccount: 'Create an account', hasAccount: 'Already have an account? Sign in', invalid: 'Incorrect email or password', accountExists: 'This email is already registered', logout: 'Sign out', forgot: 'Forgot password?', requestReset: 'Send reset email', reset: 'Set a new password', resetSent: 'If the email exists, a reset link will be sent.', resetDone: 'Password updated. Please sign in.' },
     setup: { title: 'Set up LibreFanza', database: 'Database', redis: 'Redis cache', admin: 'Administrator', driver: 'Database type', host: 'Host', port: 'Port', name: 'Database name', user: 'Username', password: 'Password', tls: 'Use TLS', test: 'Test connection', connected: 'Connected', redisOptional: 'Enable Redis', redisAddress: 'Address', redisDB: 'Database number', finish: 'Complete setup', installing: 'Setting up', failed: 'Connection or setup failed. Check your settings.', pending: 'Setup has started. Continue with the original settings.' },

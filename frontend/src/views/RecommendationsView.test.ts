@@ -83,13 +83,38 @@ describe('RecommendationsView', () => {
                   external_id: 'rec001',
                   normalized_id: 'REC-001',
                   priority: 0,
-                  title: '推荐影片标题',
-                  cover_image_url: 'https://example.com/rec.jpg',
+                  title: '推荐影片标题1',
+                  cover_image_url: 'https://example.com/rec1.jpg',
                   thumbnail_image_url: '',
                   source_url: '',
                   description: '',
                   metadata: {
-                    cast: [{ name: '推荐演员' }],
+                    cast: [{ name: '推荐演员1' }],
+                  },
+                  created_at: '',
+                  updated_at: '',
+                },
+              },
+              {
+                id: 2,
+                normalized_id: 'REC-002',
+                compressed_id: 'REC002',
+                is_hidden: false,
+                created_at: '',
+                updated_at: '',
+                preferred_item: {
+                  id: 12,
+                  source: 'fanza',
+                  external_id: 'rec002',
+                  normalized_id: 'REC-002',
+                  priority: 0,
+                  title: '推荐影片标题2',
+                  cover_image_url: 'https://example.com/rec2.jpg',
+                  thumbnail_image_url: '',
+                  source_url: '',
+                  description: '',
+                  metadata: {
+                    cast: [{ name: '推荐演员2' }],
                   },
                   created_at: '',
                   updated_at: '',
@@ -104,13 +129,13 @@ describe('RecommendationsView', () => {
     const wrapper = mount(RecommendationsView, {
       global: {
         plugins: [i18n],
-        stubs: { RouterLink: { template: '<a><slot /></a>' } },
+        stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true },
       },
     })
 
     await vi.waitFor(() => {
       expect(wrapper.text()).toContain('REC-001')
-      expect(wrapper.text()).toContain('推荐影片标题')
+      expect(wrapper.text()).toContain('推荐影片标题1')
     })
 
     // 点击推荐卡片上的“喜欢”按钮
@@ -125,6 +150,26 @@ describe('RecommendationsView', () => {
       const body = JSON.parse(feedbackCall[1].body)
       expect(body.normalized_id).toBe('REC-001')
       expect(body.action).toBe('like')
+      // 评分后自动平滑推进至下一部 REC-002
+      expect(wrapper.text()).toContain('REC-002')
+    })
+
+    // 找到上一部按钮并点击
+    const prevMovieBtn = wrapper.findAll('button').find(b => b.text().includes('上一部') || b.attributes('title')?.includes('上一部'))
+    expect(prevMovieBtn).toBeDefined()
+    await prevMovieBtn!.trigger('click')
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('REC-001')
+    })
+
+    // 找到下一部按钮并点击
+    const nextMovieBtn = wrapper.findAll('button').find(b => b.text().includes('下一部') || b.attributes('title')?.includes('下一部'))
+    expect(nextMovieBtn).toBeDefined()
+    await nextMovieBtn!.trigger('click')
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('REC-002')
     })
   })
 })

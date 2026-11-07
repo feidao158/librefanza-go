@@ -109,4 +109,27 @@ describe('AnnotationsView', () => {
       expect(body.action).toBe('like')
     })
   })
+
+  it('allows skipping to the next movie', async () => {
+    const wrapper = mount(AnnotationsView, {
+      global: {
+        plugins: [i18n],
+        stubs: { RouterLink: { template: '<a><slot /></a>' } },
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('TEST-101')
+    })
+
+    const skipBtn = wrapper.findAll('button').find(b => b.text().includes('换一个') || b.text().includes('Next'))
+    expect(skipBtn).toBeDefined()
+    await skipBtn!.trigger('click')
+
+    await vi.waitFor(() => {
+      const calls = (globalThis.fetch as any).mock.calls
+      const nextCall = calls.find((c: any) => c[0].includes('/annotations/next?exclude=TEST-101'))
+      expect(nextCall).toBeDefined()
+    })
+  })
 })

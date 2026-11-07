@@ -5,6 +5,7 @@ import { ArrowRight, CheckCircle2, Clock, ExternalLink, HelpCircle, RefreshCw, S
 import { api, jsonBody } from '../api/client'
 import type { AnnotationStats, FeedbackResponse, Movie, NextAnnotationResponse } from '../types'
 import ImageLightbox, { type LightboxItem } from '../components/ImageLightbox.vue'
+import SmoothImage from '../components/SmoothImage.vue'
 
 const { t } = useI18n()
 
@@ -21,6 +22,9 @@ const loading = ref(true)
 const submitting = ref(false)
 const error = ref(false)
 const descExpanded = ref(false)
+
+// 记录最近一次的交互动作，用于触发对应的卡片滑动离开过渡动画
+const lastAction = ref<'like' | 'dislike' | 'uncertain' | 'skip' | null>(null)
 
 // 弹窗画廊状态
 const lightboxOpen = ref(false)
@@ -58,6 +62,18 @@ const galleryImages = computed<LightboxItem[]>(() => {
   return list
 })
 
+// 根据用户的打分动作决定切卡时的过渡动画效果
+const transitionName = computed(() => {
+  if (lastAction.value === 'like') return 'card-swipe-like'
+  if (lastAction.value === 'dislike') return 'card-swipe-dislike'
+  if (lastAction.value === 'uncertain' || lastAction.value === 'skip') return 'card-swipe-up'
+  return 'card-fade'
+})
+
+function onTransitionAfterEnter() {
+  lastAction.value = null
+}
+
 function openCoverLightbox() {
   const coverUrl = movie.value?.preferred_item?.cover_image_url || movie.value?.cover_image_url
   if (!coverUrl) return
@@ -89,9 +105,16 @@ async function fetchNext(excludeId = '') {
   }
 }
 
+async function skipMovie() {
+  if (submitting.value) return
+  lastAction.value = 'skip'
+  await fetchNext(movie.value?.normalized_id || '')
+}
+
 async function submitAction(action: 'like' | 'dislike' | 'uncertain') {
   if (!movie.value || submitting.value) return
   submitting.value = true
+  lastAction.value = action
   error.value = false
   lightboxOpen.value = false
   const currentId = movie.value.normalized_id
@@ -137,7 +160,7 @@ function handleKeyDown(event: KeyboardEvent) {
     void submitAction('dislike')
   } else if (event.code === 'Space') {
     event.preventDefault()
-    void fetchNext(movie.value?.normalized_id || '')
+    void skipMovie()
   }
 }
 
@@ -152,58 +175,58 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto px-4 py-6">
+  <div class="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
     <!-- 顶部标题与说明 -->
-    <div class="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div class="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4">
       <div>
-        <h1 class="text-3xl font-bold flex items-center gap-2">
+        <h1 class="text-2xl sm:text-3xl font-bold flex items-center gap-2">
           <span>{{ t('annotations.title') }}</span>
         </h1>
-        <p class="text-base-content/70 mt-1">{{ t('annotations.subtitle') }}</p>
+        <p class="text-xs sm:text-sm text-base-content/70 mt-1">{{ t('annotations.subtitle') }}</p>
       </div>
 
       <RouterLink
         v-if="stats.ready"
         to="/recommendations"
-        class="btn btn-primary gap-2 shadow-sm"
+        class="btn btn-primary btn-sm sm:btn-md gap-2 shadow-sm self-start sm:self-auto"
       >
-        <Sparkles :size="18" />
+        <Sparkles :size="16" class="sm:w-[18px] sm:h-[18px]" />
         <span>{{ t('annotations.goToRecommendations') }}</span>
-        <ArrowRight :size="16" />
+        <ArrowRight :size="15" class="sm:w-[16px] sm:h-[16px]" />
       </RouterLink>
     </div>
 
     <!-- 统计卡片与进度条 -->
-    <div class="card bg-base-200 shadow-sm p-4 mb-6">
-      <div class="flex flex-wrap items-center justify-between gap-4 mb-3">
-        <div class="flex items-center gap-4 text-sm font-medium">
-          <span class="badge badge-lg badge-neutral">
+    <div class="card bg-base-200 shadow-sm p-3 sm:p-4 mb-4 sm:mb-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 mb-2.5">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3 text-xs sm:text-sm font-medium">
+          <span class="badge badge-sm sm:badge-md badge-neutral">
             {{ t('annotations.totalAnnotated', { count: stats.total }) }}
           </span>
           <span class="text-success flex items-center gap-1">
-            <ThumbsUp :size="16" /> {{ t('annotations.likedCount', { count: stats.liked }) }}
+            <ThumbsUp :size="14" /> {{ t('annotations.likedCount', { count: stats.liked }) }}
           </span>
           <span class="text-error flex items-center gap-1">
-            <ThumbsDown :size="16" /> {{ t('annotations.dislikedCount', { count: stats.disliked }) }}
+            <ThumbsDown :size="14" /> {{ t('annotations.dislikedCount', { count: stats.disliked }) }}
           </span>
           <span class="text-base-content/60 flex items-center gap-1">
-            <HelpCircle :size="16" /> {{ t('annotations.uncertainCount', { count: stats.uncertain }) }}
+            <HelpCircle :size="14" /> {{ t('annotations.uncertainCount', { count: stats.uncertain }) }}
           </span>
         </div>
 
-        <div v-if="stats.ready" class="text-success font-medium flex items-center gap-1 text-sm">
-          <CheckCircle2 :size="18" />
+        <div v-if="stats.ready" class="text-success font-medium flex items-center gap-1 text-xs sm:text-sm">
+          <CheckCircle2 :size="16" />
           <span>{{ t('annotations.readyTip') }}</span>
         </div>
-        <div v-else class="text-warning font-medium text-sm">
+        <div v-else class="text-warning font-medium text-xs sm:text-sm">
           {{ t('annotations.progressTip', { remaining: remainingToReady }) }}
         </div>
       </div>
 
       <!-- 进度条 -->
-      <div class="w-full bg-base-300 rounded-full h-2.5 overflow-hidden">
+      <div class="w-full bg-base-300 rounded-full h-2 sm:h-2.5 overflow-hidden">
         <div
-          class="h-2.5 rounded-full transition-all duration-300"
+          class="h-full rounded-full transition-all duration-300"
           :class="stats.ready ? 'bg-success' : 'bg-primary'"
           :style="{ width: `${progressPercent}%` }"
         ></div>
@@ -211,7 +234,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 错误提醒 -->
-    <div v-if="error" class="alert alert-error mb-6 shadow-sm">
+    <div v-if="error" class="alert alert-error mb-4 sm:mb-6 shadow-sm">
       <span>{{ t('common.error') }}</span>
       <button class="btn btn-sm btn-ghost" @click="fetchNext()">{{ t('common.retry') }}</button>
     </div>
@@ -221,8 +244,8 @@ onBeforeUnmount(() => {
       <span class="loading loading-spinner loading-lg text-primary"></span>
     </div>
 
-    <div v-else-if="!movie" class="card bg-base-100 shadow-md p-12 text-center">
-      <p class="text-lg text-base-content/60">{{ t('annotations.noMovies') }}</p>
+    <div v-else-if="!movie" class="card bg-base-100 shadow-md p-8 sm:p-12 text-center">
+      <p class="text-base sm:text-lg text-base-content/60">{{ t('annotations.noMovies') }}</p>
       <div class="mt-4">
         <button class="btn btn-outline gap-2" @click="fetchNext()">
           <RefreshCw :size="16" />
@@ -231,225 +254,240 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-else class="card bg-base-100 shadow-lg border border-base-300 overflow-hidden">
-      <div class="grid grid-cols-1 md:grid-cols-12 gap-6 p-6">
-        <!-- 封面大图（可点击弹窗查看高清大图） -->
-        <div class="md:col-span-5 flex flex-col items-center">
-          <div
-            class="w-full relative aspect-[2/3] max-w-[360px] bg-base-200 rounded-lg overflow-hidden shadow-inner flex items-center justify-center cursor-pointer group"
-            :title="t('common.previewDetails')"
-            @click="openCoverLightbox"
-          >
-            <img
-              v-if="movie.preferred_item?.cover_image_url || movie.cover_image_url"
-              :src="movie.preferred_item?.cover_image_url || movie.cover_image_url"
-              :alt="movie.preferred_item?.title || movie.normalized_id"
-              class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              loading="eager"
-            />
-            <span v-else class="text-base-content/40 font-medium">{{ t('movies.noCover') }}</span>
+    <!-- 卡片平滑切换过渡动效 -->
+    <Transition
+      v-else
+      :name="transitionName"
+      mode="out-in"
+      @after-enter="onTransitionAfterEnter"
+    >
+      <div
+        :key="movie.normalized_id"
+        class="card bg-base-100 shadow-lg border border-base-300 overflow-hidden relative"
+      >
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 p-4 sm:p-6">
+          <!-- 封面大图（可点击弹窗查看高清大图，使用平滑渐变加载） -->
+          <div class="md:col-span-5 flex flex-col items-center">
+            <div
+              class="w-full relative aspect-[2/3] max-w-[200px] sm:max-w-[260px] md:max-w-[340px] bg-base-200 rounded-lg overflow-hidden shadow-inner flex items-center justify-center cursor-pointer group"
+              :title="t('common.previewDetails')"
+              @click="openCoverLightbox"
+            >
+              <SmoothImage
+                :src="movie.preferred_item?.cover_image_url || movie.cover_image_url"
+                :alt="movie.preferred_item?.title || movie.normalized_id"
+                aspect="w-full h-full"
+                :fallback-text="t('movies.noCover')"
+                loading="eager"
+                img-class="group-hover:scale-105 transition-transform duration-300"
+              >
+                <!-- 番号角标 -->
+                <div class="absolute top-2.5 left-2.5 z-10">
+                  <span class="badge badge-neutral shadow font-mono text-xs sm:text-sm px-2 py-1.5 sm:px-2.5 sm:py-2">
+                    {{ movie.normalized_id }}
+                  </span>
+                </div>
 
-            <!-- 番号角标 -->
-            <div class="absolute top-3 left-3">
-              <span class="badge badge-neutral shadow font-mono text-sm px-2.5 py-3">
-                {{ movie.normalized_id }}
-              </span>
+                <!-- 点击看大图提示浮层 -->
+                <div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10">
+                  <span class="badge badge-neutral bg-black/70 text-white gap-1 py-1.5 px-2.5 text-xs shadow">
+                    <ZoomIn :size="14" /> 点击查看大图
+                  </span>
+                </div>
+              </SmoothImage>
             </div>
 
-            <!-- 点击看大图提示浮层 -->
-            <div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <span class="badge badge-neutral bg-black/70 text-white gap-1 py-2 px-3 shadow">
-                <ZoomIn :size="16" /> 点击查看大图
-              </span>
-            </div>
+            <!-- 缩略图快速预览提示 -->
+            <p v-if="sampleImages.length" class="text-[11px] sm:text-xs text-base-content/50 mt-1.5 text-center">
+              共包含 {{ sampleImages.length }} 张预览截图，点击可全屏浏览
+            </p>
           </div>
 
-          <!-- 缩略图快速预览提示 -->
-          <p v-if="sampleImages.length" class="text-xs text-base-content/50 mt-2">
-            共包含 {{ sampleImages.length }} 张预览截图，点击可全屏浏览
-          </p>
-        </div>
+          <!-- 详细信息 -->
+          <div class="md:col-span-7 flex flex-col justify-between">
+            <div>
+              <div class="flex items-start justify-between gap-2 mb-2">
+                <RouterLink
+                  :to="`/movies/${movie.normalized_id}`"
+                  target="_blank"
+                  class="link link-hover text-lg sm:text-2xl font-bold line-clamp-2"
+                  :title="movie.preferred_item?.title || movie.normalized_id"
+                >
+                  {{ movie.preferred_item?.title || movie.normalized_id }}
+                </RouterLink>
 
-        <!-- 详细信息 -->
-        <div class="md:col-span-7 flex flex-col justify-between">
-          <div>
-            <div class="flex items-start justify-between gap-2 mb-2">
-              <RouterLink
-                :to="`/movies/${movie.normalized_id}`"
-                target="_blank"
-                class="link link-hover text-2xl font-bold line-clamp-2"
-                :title="movie.preferred_item?.title || movie.normalized_id"
-              >
-                {{ movie.preferred_item?.title || movie.normalized_id }}
-              </RouterLink>
+                <RouterLink
+                  :to="`/movies/${movie.normalized_id}`"
+                  target="_blank"
+                  class="btn btn-ghost btn-xs flex-shrink-0 gap-1 text-base-content/60"
+                  :title="t('movies.visit')"
+                >
+                  <ExternalLink :size="14" />
+                </RouterLink>
+              </div>
 
-              <RouterLink
-                :to="`/movies/${movie.normalized_id}`"
-                target="_blank"
-                class="btn btn-ghost btn-xs flex-shrink-0 gap-1 text-base-content/60"
-                :title="t('movies.visit')"
-              >
-                <ExternalLink :size="14" />
-              </RouterLink>
+              <!-- 详细属性 -->
+              <div class="space-y-2.5 sm:space-y-3 mt-3 sm:mt-4 text-xs sm:text-sm text-base-content/80">
+                <!-- 发行日期与时长与评分 -->
+                <div class="flex flex-wrap items-center gap-2.5 sm:gap-4 text-xs font-medium">
+                  <span v-if="movie.release_date || movie.preferred_item?.release_date" class="text-base-content/70">
+                    {{ t('common.date') }}: {{ (movie.release_date || movie.preferred_item?.release_date || '').slice(0, 10) }}
+                  </span>
+                  <span v-if="movie.preferred_item?.metadata?.volume_minutes" class="flex items-center gap-1 text-base-content/70">
+                    <Clock :size="12" /> {{ movie.preferred_item.metadata.volume_minutes }} {{ t('movies.minutes') }}
+                  </span>
+                  <span v-if="movie.preferred_item?.metadata?.rating != null" class="flex items-center gap-1 text-amber-600 font-bold">
+                    <Star :size="12" class="fill-amber-400 text-amber-500" /> {{ movie.preferred_item.metadata.rating }}
+                  </span>
+                </div>
+
+                <!-- 演员列表 -->
+                <div v-if="movie.preferred_item?.metadata?.cast?.length" class="flex gap-2 items-start">
+                  <span class="text-base-content/50 w-12 sm:w-16 flex-shrink-0 pt-0.5 text-xs">{{ t('movies.cast') }}:</span>
+                  <div class="flex flex-wrap gap-1 sm:gap-1.5">
+                    <span
+                      v-for="actress in movie.preferred_item.metadata.cast"
+                      :key="actress.name"
+                      class="badge badge-secondary badge-outline text-[11px] sm:text-xs py-0.5"
+                    >
+                      {{ actress.name }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 类别标签 -->
+                <div v-if="movie.preferred_item?.metadata?.genres?.length" class="flex gap-2 items-start">
+                  <span class="text-base-content/50 w-12 sm:w-16 flex-shrink-0 pt-0.5 text-xs">{{ t('movies.genres') }}:</span>
+                  <div class="flex flex-wrap gap-1 sm:gap-1.5">
+                    <span
+                      v-for="genre in movie.preferred_item.metadata.genres"
+                      :key="genre"
+                      class="badge badge-ghost text-[11px] sm:text-xs py-0.5"
+                    >
+                      {{ genre }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 厂牌 / 制作商 -->
+                <div v-if="movie.preferred_item?.metadata?.makers?.length || movie.preferred_item?.metadata?.labels?.length" class="flex gap-2 text-xs">
+                  <span class="text-base-content/50 w-12 sm:w-16 flex-shrink-0">{{ t('movies.makers') }}:</span>
+                  <span class="line-clamp-1">{{ [...(movie.preferred_item.metadata?.makers || []), ...(movie.preferred_item.metadata?.labels || [])].join(' / ') }}</span>
+                </div>
+
+                <!-- 导演 -->
+                <div v-if="movie.preferred_item?.metadata?.directors?.length" class="flex gap-2 text-xs">
+                  <span class="text-base-content/50 w-12 sm:w-16 flex-shrink-0">{{ t('movies.directors') }}:</span>
+                  <span class="line-clamp-1">{{ movie.preferred_item.metadata.directors.join(', ') }}</span>
+                </div>
+
+                <!-- 简介（可展开） -->
+                <div v-if="movie.preferred_item?.description" class="pt-1">
+                  <p
+                    class="text-xs text-base-content/70 leading-relaxed cursor-pointer"
+                    :class="{ 'line-clamp-2': !descExpanded }"
+                    @click="descExpanded = !descExpanded"
+                  >
+                    {{ movie.preferred_item.description }}
+                  </p>
+                  <button
+                    v-if="movie.preferred_item.description.length > 80"
+                    type="button"
+                    class="text-[11px] text-primary mt-0.5"
+                    @click="descExpanded = !descExpanded"
+                  >
+                    {{ descExpanded ? t('common.close') : t('common.view') }}
+                  </button>
+                </div>
+
+                <!-- 预览截图网格展示（可点击弹窗放大并左右切换，使用平滑渐变加载） -->
+                <div v-if="sampleImages.length" class="pt-2">
+                  <div class="text-xs text-base-content/60 font-medium mb-1.5 flex items-center justify-between">
+                    <span>{{ t('movies.samples') }} ({{ sampleImages.length }})</span>
+                    <span class="text-[11px] text-base-content/40 hidden sm:inline">点击放大可左右键切换</span>
+                  </div>
+                  <div class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-1.5 sm:gap-2 max-h-24 sm:max-h-36 overflow-y-auto p-1 bg-base-200/50 rounded-lg">
+                    <figure
+                      v-for="(sampleUrl, idx) in sampleImages"
+                      :key="sampleUrl"
+                      class="relative aspect-[1.48] rounded overflow-hidden cursor-pointer group bg-base-300 hover:ring-2 hover:ring-primary transition-all"
+                      :title="`预览图 ${idx + 1}`"
+                      @click="openSampleLightbox(idx)"
+                    >
+                      <SmoothImage
+                        :src="sampleUrl"
+                        :alt="`Sample ${idx + 1}`"
+                        aspect="w-full h-full"
+                        object-fit="cover"
+                        loading="lazy"
+                        img-class="group-hover:scale-105 transition-transform"
+                      >
+                        <div class="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10">
+                          <ZoomIn :size="14" class="text-white" />
+                        </div>
+                      </SmoothImage>
+                    </figure>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <!-- 详细属性 -->
-            <div class="space-y-3 mt-4 text-sm text-base-content/80">
-              <!-- 发行日期与时长与评分 -->
-              <div class="flex flex-wrap items-center gap-4 text-xs font-medium">
-                <span v-if="movie.release_date || movie.preferred_item?.release_date" class="text-base-content/70">
-                  {{ t('common.date') }}: {{ (movie.release_date || movie.preferred_item?.release_date || '').slice(0, 10) }}
-                </span>
-                <span v-if="movie.preferred_item?.metadata?.volume_minutes" class="flex items-center gap-1 text-base-content/70">
-                  <Clock :size="13" /> {{ movie.preferred_item.metadata.volume_minutes }} {{ t('movies.minutes') }}
-                </span>
-                <span v-if="movie.preferred_item?.metadata?.rating != null" class="flex items-center gap-1 text-amber-600 font-bold">
-                  <Star :size="13" class="fill-amber-400 text-amber-500" /> {{ movie.preferred_item.metadata.rating }}
-                </span>
-              </div>
-
-              <!-- 演员列表 -->
-              <div v-if="movie.preferred_item?.metadata?.cast?.length" class="flex gap-2 items-start">
-                <span class="text-base-content/50 w-16 flex-shrink-0 pt-0.5">{{ t('movies.cast') }}:</span>
-                <div class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="actress in movie.preferred_item.metadata.cast"
-                    :key="actress.name"
-                    class="badge badge-secondary badge-outline text-xs"
-                  >
-                    {{ actress.name }}
-                  </span>
-                </div>
-              </div>
-
-              <!-- 类别标签 -->
-              <div v-if="movie.preferred_item?.metadata?.genres?.length" class="flex gap-2 items-start">
-                <span class="text-base-content/50 w-16 flex-shrink-0 pt-0.5">{{ t('movies.genres') }}:</span>
-                <div class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="genre in movie.preferred_item.metadata.genres"
-                    :key="genre"
-                    class="badge badge-ghost text-xs"
-                  >
-                    {{ genre }}
-                  </span>
-                </div>
-              </div>
-
-              <!-- 厂牌 / 制作商 -->
-              <div v-if="movie.preferred_item?.metadata?.makers?.length || movie.preferred_item?.metadata?.labels?.length" class="flex gap-2">
-                <span class="text-base-content/50 w-16 flex-shrink-0">{{ t('movies.makers') }}:</span>
-                <span>{{ [...(movie.preferred_item.metadata?.makers || []), ...(movie.preferred_item.metadata?.labels || [])].join(' / ') }}</span>
-              </div>
-
-              <!-- 导演 -->
-              <div v-if="movie.preferred_item?.metadata?.directors?.length" class="flex gap-2">
-                <span class="text-base-content/50 w-16 flex-shrink-0">{{ t('movies.directors') }}:</span>
-                <span>{{ movie.preferred_item.metadata.directors.join(', ') }}</span>
-              </div>
-
-              <!-- 简介（可展开） -->
-              <div v-if="movie.preferred_item?.description" class="pt-1">
-                <p
-                  class="text-xs text-base-content/70 leading-relaxed cursor-pointer"
-                  :class="{ 'line-clamp-2': !descExpanded }"
-                  @click="descExpanded = !descExpanded"
-                >
-                  {{ movie.preferred_item.description }}
-                </p>
+            <!-- 3个选项操作栏 -->
+            <div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-base-200">
+              <div class="grid grid-cols-3 gap-2 sm:gap-3">
+                <!-- 喜欢 -->
                 <button
-                  v-if="movie.preferred_item.description.length > 80"
-                  type="button"
-                  class="text-[11px] text-primary mt-0.5"
-                  @click="descExpanded = !descExpanded"
+                  class="btn btn-success text-white shadow font-bold text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
+                  :disabled="submitting"
+                  @click="submitAction('like')"
                 >
-                  {{ descExpanded ? t('common.close') : t('common.view') }}
+                  <ThumbsUp :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
+                  <span class="truncate">{{ t('annotations.like') }}</span>
+                  <kbd class="hidden sm:inline-flex kbd kbd-sm bg-success-content/20 text-white ml-1">1</kbd>
+                </button>
+
+                <!-- 不确定 -->
+                <button
+                  class="btn btn-outline border-base-content/30 text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
+                  :disabled="submitting"
+                  @click="submitAction('uncertain')"
+                >
+                  <HelpCircle :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
+                  <span class="truncate">{{ t('annotations.uncertain') }}</span>
+                  <kbd class="hidden sm:inline-flex kbd kbd-sm bg-base-300 ml-1">2</kbd>
+                </button>
+
+                <!-- 不喜欢 -->
+                <button
+                  class="btn btn-error text-white shadow font-bold text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
+                  :disabled="submitting"
+                  @click="submitAction('dislike')"
+                >
+                  <ThumbsDown :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
+                  <span class="truncate">{{ t('annotations.dislike') }}</span>
+                  <kbd class="hidden sm:inline-flex kbd kbd-sm bg-error-content/20 text-white ml-1">3</kbd>
                 </button>
               </div>
 
-              <!-- 预览截图网格展示（可点击弹窗放大并左右切换） -->
-              <div v-if="sampleImages.length" class="pt-2">
-                <div class="text-xs text-base-content/60 font-medium mb-1.5 flex items-center justify-between">
-                  <span>{{ t('movies.samples') }} ({{ sampleImages.length }})</span>
-                  <span class="text-[11px] text-base-content/40">点击放大可左右键切换</span>
-                </div>
-                <div class="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-36 overflow-y-auto p-1 bg-base-200/50 rounded-lg">
-                  <figure
-                    v-for="(sampleUrl, idx) in sampleImages"
-                    :key="sampleUrl"
-                    class="relative aspect-[1.48] rounded overflow-hidden cursor-pointer group bg-base-300 hover:ring-2 hover:ring-primary transition-all"
-                    :title="`预览图 ${idx + 1}`"
-                    @click="openSampleLightbox(idx)"
-                  >
-                    <img
-                      :src="sampleUrl"
-                      :alt="`Sample ${idx + 1}`"
-                      class="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                      loading="lazy"
-                      referrerpolicy="no-referrer"
-                    />
-                    <div class="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <ZoomIn :size="14" class="text-white" />
-                    </div>
-                  </figure>
-                </div>
+              <!-- 跳过换一个与快捷键提示 -->
+              <div class="flex items-center justify-between mt-2.5 sm:mt-3 text-xs text-base-content/60">
+                <span class="hidden sm:inline">{{ t('annotations.shortcutHint') }}</span>
+                <span class="sm:hidden text-[11px] text-base-content/40">点击按键即可记录偏好</span>
+                <button
+                  class="btn btn-ghost btn-xs gap-1 ml-auto"
+                  :disabled="submitting"
+                  @click="skipMovie"
+                >
+                  <RefreshCw :size="12" :class="{ 'animate-spin': submitting }" />
+                  <span>{{ t('annotations.skip') }}</span>
+                  <span class="hidden sm:inline">(Space)</span>
+                </button>
               </div>
-            </div>
-          </div>
-
-          <!-- 3个选项操作栏 -->
-          <div class="mt-6 pt-4 border-t border-base-200">
-            <div class="grid grid-cols-3 gap-3">
-              <!-- 喜欢 -->
-              <button
-                class="btn btn-success text-white shadow font-bold text-base h-14"
-                :disabled="submitting"
-                @click="submitAction('like')"
-              >
-                <ThumbsUp :size="20" />
-                <span>{{ t('annotations.like') }}</span>
-                <kbd class="kbd kbd-sm bg-success-content/20 text-white ml-1">1</kbd>
-              </button>
-
-              <!-- 不确定 -->
-              <button
-                class="btn btn-outline border-base-content/30 text-base h-14"
-                :disabled="submitting"
-                @click="submitAction('uncertain')"
-              >
-                <HelpCircle :size="20" />
-                <span>{{ t('annotations.uncertain') }}</span>
-                <kbd class="kbd kbd-sm bg-base-300 ml-1">2</kbd>
-              </button>
-
-              <!-- 不喜欢 -->
-              <button
-                class="btn btn-error text-white shadow font-bold text-base h-14"
-                :disabled="submitting"
-                @click="submitAction('dislike')"
-              >
-                <ThumbsDown :size="20" />
-                <span>{{ t('annotations.dislike') }}</span>
-                <kbd class="kbd kbd-sm bg-error-content/20 text-white ml-1">3</kbd>
-              </button>
-            </div>
-
-            <!-- 跳过换一个与快捷键提示 -->
-            <div class="flex items-center justify-between mt-3 text-xs text-base-content/60">
-              <span>{{ t('annotations.shortcutHint') }}</span>
-              <button
-                class="btn btn-ghost btn-xs gap-1"
-                :disabled="submitting"
-                @click="fetchNext(movie.normalized_id)"
-              >
-                <RefreshCw :size="12" />
-                <span>{{ t('annotations.skip') }} (Space)</span>
-              </button>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Transition>
 
     <!-- 高清大图弹窗画廊（支持封面与所有预览图左右切换） -->
     <ImageLightbox
@@ -460,3 +498,60 @@ onBeforeUnmount(() => {
     />
   </div>
 </template>
+
+<style scoped>
+/* 卡片切换过渡动效 */
+.card-swipe-like-leave-active,
+.card-swipe-dislike-leave-active,
+.card-swipe-up-leave-active,
+.card-fade-leave-active {
+  transition: opacity 0.26s cubic-bezier(0.4, 0, 1, 1), transform 0.26s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.card-swipe-like-enter-active,
+.card-swipe-dislike-enter-active,
+.card-swipe-up-enter-active,
+.card-fade-enter-active {
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 喜欢操作：向右微倾斜滑出 */
+.card-swipe-like-leave-to {
+  opacity: 0;
+  transform: translate3d(50px, -8px, 0) rotate(2.5deg) scale(0.96);
+}
+
+/* 不喜欢操作：向左微倾斜滑出 */
+.card-swipe-dislike-leave-to {
+  opacity: 0;
+  transform: translate3d(-50px, -8px, 0) rotate(-2.5deg) scale(0.96);
+}
+
+/* 不确定或跳过：向上平滑漂移浮出 */
+.card-swipe-up-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -22px, 0) scale(0.97);
+}
+
+.card-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
+/* 新卡片进入：从底部轻微浮入并恢复正常大小 */
+.card-swipe-like-enter-from,
+.card-swipe-dislike-enter-from,
+.card-swipe-up-enter-from,
+.card-fade-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 20px, 0) scale(0.97);
+}
+
+.card-swipe-like-enter-to,
+.card-swipe-dislike-enter-to,
+.card-swipe-up-enter-to,
+.card-fade-enter-to {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+</style>
