@@ -21,6 +21,7 @@ import (
 
 type ClientSettings struct {
 	RequestLimiter        RequestLimiter `json:"-"`
+	Health                SourceHealth   `json:"-"`
 	FanzaURL              string         `json:"fanza_url"`
 	FanzaAPIID            string         `json:"fanza_api_id"`
 	FanzaAffiliateID      string         `json:"fanza_affiliate_id"`
@@ -32,10 +33,22 @@ type ClientSettings struct {
 	AVMOOURL              string         `json:"avmoo_url"`
 	JavLibraryURL         string         `json:"javlibrary_url"`
 	LibreDMMURL           string         `json:"libredmm_url"`
+	JavDBURL              string         `json:"javdb_url"`
+	JavBusURL             string         `json:"javbus_url"`
+	JavBooksURL           string         `json:"javbooks_url"`
+	JavQueryURL           string         `json:"javquery_url"`
 	JableCookie           string         `json:"jable_cookie"`
 	JavLibraryCookie      string         `json:"javlibrary_cookie"`
+	JavDBCookie           string         `json:"javdb_cookie"`
+	JavBusCookie          string         `json:"javbus_cookie"`
+	JavBooksCookie        string         `json:"javbooks_cookie"`
+	JavQueryCookie        string         `json:"javquery_cookie"`
 	ClearJableCookie      bool           `json:"clear_jable_cookie,omitempty"`
 	ClearJavLibraryCookie bool           `json:"clear_javlibrary_cookie,omitempty"`
+	ClearJavDBCookie      bool           `json:"clear_javdb_cookie,omitempty"`
+	ClearJavBusCookie     bool           `json:"clear_javbus_cookie,omitempty"`
+	ClearJavBooksCookie   bool           `json:"clear_javbooks_cookie,omitempty"`
+	ClearJavQueryCookie   bool           `json:"clear_javquery_cookie,omitempty"`
 	ProxyURL              string         `json:"proxy_url"`
 	ClearProxy            bool           `json:"clear_proxy,omitempty"`
 }
@@ -45,12 +58,68 @@ type RequestLimiter interface {
 	Pause(context.Context, string, time.Time) error
 }
 
+type SourceHealth interface {
+	Begin(context.Context, string) (time.Time, error)
+	End(context.Context, string, error) (bool, error)
+}
+
+type DeferredError struct{ RetryAt time.Time }
+
+func (e *DeferredError) Error() string { return "source temporarily deferred" }
+
+type SourceFailure struct {
+	Err    error
+	Report bool
+}
+
+func (e *SourceFailure) Error() string { return e.Err.Error() }
+func (e *SourceFailure) Unwrap() error { return e.Err }
+
+func (p *httpProvider) withHealth(ctx context.Context, run func() ([]Parsed, error)) ([]Parsed, error) {
+	if p.settings.Health == nil {
+		return run()
+	}
+	retry, err := p.settings.Health.Begin(ctx, p.kind)
+	if err != nil {
+		return nil, err
+	}
+	if !retry.IsZero() {
+		return nil, &DeferredError{RetryAt: retry}
+	}
+	items, sourceErr := run()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var saveErr *SaveError
+	if errors.As(sourceErr, &saveErr) {
+		if _, err := p.settings.Health.End(ctx, p.kind, nil); err != nil {
+			return nil, err
+		}
+		return nil, sourceErr
+	}
+	report, err := p.settings.Health.End(ctx, p.kind, sourceErr)
+	if err != nil {
+		return nil, err
+	}
+	if sourceErr != nil {
+		return nil, &SourceFailure{Err: sourceErr, Report: report}
+	}
+	return items, nil
+}
+
+func RunSourceTask(ctx context.Context, settings ClientSettings, source string, run func() error) error {
+	provider := &httpProvider{kind: source, settings: settings}
+	_, err := provider.withHealth(ctx, func() ([]Parsed, error) { return nil, run() })
+	return err
+}
+
 type httpProvider struct {
-	kind     string
-	base     *url.URL
-	client   *http.Client
-	settings ClientSettings
-	gate     *sourceGate
+	kind         string
+	base         *url.URL
+	client       *http.Client
+	settings     ClientSettings
+	gate         *sourceGate
+	browserFetch func(context.Context, string, string) ([]byte, *url.URL, error)
 }
 
 type sourceGate struct {
@@ -102,7 +171,7 @@ func (g *sourceGate) deferUntil(value time.Time) {
 func (p *httpProvider) SourceName() string { return p.kind }
 
 func NewProviders(settings ClientSettings) ([]Provider, error) {
-	for _, value := range []string{settings.JableCookie, settings.JavLibraryCookie} {
+	for _, value := range []string{settings.JableCookie, settings.JavDBCookie, settings.JavBooksCookie, settings.JavQueryCookie} {
 		if len(value) > 8192 || strings.ContainsAny(value, "\r\n") {
 			return nil, errors.New("invalid source session")
 		}
@@ -112,10 +181,11 @@ func NewProviders(settings ClientSettings) ([]Provider, error) {
 		{"sod", settings.SODURL, "https://ec.sod.co.jp/"},
 		{"mgstage", settings.MGStageURL, "https://www.mgstage.com/"},
 		{"fc2", settings.FC2URL, "https://adult.contents.fc2.com/"},
-		{"javlibrary", settings.JavLibraryURL, "https://www.javlibrary.com/"},
-		{"avmoo", settings.AVMOOURL, "https://avmoo.shop/"},
 		{"jable", settings.JableURL, "https://jable.tv/"},
 		{"libredmm", settings.LibreDMMURL, "https://www.libredmm.com/"},
+		{"javdb", settings.JavDBURL, "https://javdb.com/"},
+		{"javbooks", settings.JavBooksURL, "https://javbooks.com/"},
+		{"javquery", settings.JavQueryURL, "https://javquery.cc/"},
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if settings.ProxyURL != "" {
@@ -141,7 +211,7 @@ func NewProviders(settings ClientSettings) ([]Provider, error) {
 		if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 			return nil, fmt.Errorf("invalid %s URL", entry.kind)
 		}
-		if (entry.kind == "jable" || entry.kind == "avmoo" || entry.kind == "javlibrary" || entry.kind == "libredmm") && (base.User != nil || base.RawQuery != "" || base.Fragment != "") {
+		if (entry.kind == "jable" || entry.kind == "libredmm" || entry.kind == "javdb" || entry.kind == "javbus" || entry.kind == "javbooks" || entry.kind == "javquery") && (base.User != nil || base.RawQuery != "" || base.Fragment != "") {
 			return nil, fmt.Errorf("invalid %s URL", entry.kind)
 		}
 		if !strings.HasSuffix(base.Path, "/") {
@@ -157,6 +227,10 @@ func (p *httpProvider) Search(ctx context.Context, id string) ([]Parsed, error) 
 	if strings.HasPrefix(id, "FC2-") && (p.kind == "fanza" || p.kind == "sod" || p.kind == "mgstage") || !strings.HasPrefix(id, "FC2-") && p.kind == "fc2" {
 		return nil, nil
 	}
+	return p.withHealth(ctx, func() ([]Parsed, error) { return p.search(ctx, id) })
+}
+
+func (p *httpProvider) search(ctx context.Context, id string) ([]Parsed, error) {
 	switch p.kind {
 	case "fanza":
 		return p.searchFanza(ctx, id)
@@ -168,12 +242,10 @@ func (p *httpProvider) Search(ctx context.Context, id string) ([]Parsed, error) 
 		return p.searchFC2(ctx, id)
 	case "libredmm":
 		return p.searchLibreDMM(ctx, id)
-	case "avmoo":
-		return p.searchAVMOO(ctx, id)
-	case "javlibrary":
-		return p.searchJavLibrary(ctx, id)
 	case "jable":
 		return p.searchJable(ctx, id)
+	case "javdb", "javbus", "javbooks", "javquery":
+		return p.searchNewSource(ctx, id)
 	default:
 		return nil, errors.New("unsupported source")
 	}
@@ -181,7 +253,7 @@ func (p *httpProvider) Search(ctx context.Context, id string) ([]Parsed, error) 
 
 func (p *httpProvider) searchFanza(ctx context.Context, id string) ([]Parsed, error) {
 	if p.settings.FanzaAPIID == "" || p.settings.FanzaAffiliateID == "" {
-		return nil, nil
+		return nil, errors.New("Fanza credentials are not configured")
 	}
 	var result []Parsed
 	seen := map[string]bool{}
@@ -286,7 +358,10 @@ func CrawlFanza(ctx context.Context, settings ClientSettings, days int, sink Sin
 			}
 			seen[item.Item.ExternalID] = true
 			provider.enrichFanza(ctx, &item)
-			return sink.Save(ctx, item)
+			if err := sink.Save(ctx, item); err != nil {
+				return &SaveError{Err: err}
+			}
+			return nil
 		})
 		if err != nil {
 			return err
@@ -462,8 +537,9 @@ func (p *httpProvider) request(ctx context.Context, method, target string, heade
 			if p.kind == "jable" && p.settings.JableCookie != "" {
 				req.Header.Set("Cookie", p.settings.JableCookie)
 			}
-			if p.kind == "javlibrary" && p.settings.JavLibraryCookie != "" {
-				req.Header.Set("Cookie", p.settings.JavLibraryCookie)
+			cookie := map[string]string{"javdb": p.settings.JavDBCookie, "javbus": p.settings.JavBusCookie, "javbooks": p.settings.JavBooksCookie, "javquery": p.settings.JavQueryCookie}[p.kind]
+			if cookie != "" {
+				req.Header.Set("Cookie", cookie)
 			}
 		}
 		resp, err := p.client.Do(req)
@@ -472,16 +548,17 @@ func (p *httpProvider) request(ctx context.Context, method, target string, heade
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			delay := retryAfter(resp.Header.Get("Retry-After"), time.Now())
+			deadline := time.Now().Add(delay)
 			resp.Body.Close()
 			if p.settings.RequestLimiter != nil {
-				if err := p.settings.RequestLimiter.Pause(ctx, p.kind, time.Now().Add(delay)); err != nil {
+				if err := p.settings.RequestLimiter.Pause(ctx, p.kind, deadline); err != nil {
 					return nil, 0, err
 				}
 			} else {
-				p.gate.deferUntil(time.Now().Add(delay))
+				p.gate.deferUntil(deadline)
 			}
 			if attempt == 2 {
-				return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode}
+				return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode, RetryAt: deadline}
 			}
 			if p.settings.RequestLimiter == nil && p.gate == nil && delay > 0 {
 				timer := time.NewTimer(delay)
@@ -510,6 +587,9 @@ func (p *httpProvider) request(ctx context.Context, method, target string, heade
 
 func retryAfter(value string, now time.Time) time.Duration {
 	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
+		if int64(seconds) > int64((time.Duration(1<<63-1))/time.Second) {
+			return time.Duration(1<<63 - 1)
+		}
 		return time.Duration(seconds) * time.Second
 	}
 	if deadline, err := http.ParseTime(value); err == nil && deadline.After(now) {

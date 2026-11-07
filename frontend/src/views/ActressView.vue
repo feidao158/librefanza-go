@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, UserRound } from 'lucide-vue-next'
+import { ArrowLeft, UserRound, Users } from 'lucide-vue-next'
 import { api } from '../api/client'
 import MovieCard from '../components/MovieCard.vue'
 import Pagination from '../components/Pagination.vue'
@@ -48,11 +48,43 @@ watch(() => route.fullPath, load, { immediate: true })
 <template>
   <div class="content-wrap detail-wrap">
     <RouterLink to="/actresses" class="back-link"><ArrowLeft :size="16" />{{ $t('nav.actresses') }}</RouterLink>
-    <div v-if="loading" class="center-state"><span class="loading loading-spinner"></span></div>
-    <div v-else-if="error" class="center-state">{{ $t('common.error') }}</div>
-    <template v-else-if="actress"><div class="actress-profile"><div class="profile-photo"><img v-if="actress.image_url && !broken" :src="actress.image_url" :alt="actress.name" referrerpolicy="no-referrer" @error="broken = true"><UserRound v-else :size="38" /></div><div><div class="section-kicker">LIBREFANZA / PEOPLE</div><h1>{{ actress.name }}</h1><span v-if="actress.fanza_id" class="muted">FANZA #{{ actress.fanza_id }}</span></div></div>
-      <div class="section-heading"><div><span class="section-number">01</span><h2>{{ $t('actresses.works') }}</h2></div><div class="segmented"><button class="btn btn-sm" :class="solo ? 'btn-ghost' : 'btn-active'" @click="setSolo(false)">{{ $t('actresses.allWorks') }}</button><button class="btn btn-sm" :class="solo ? 'btn-active' : 'btn-ghost'" @click="setSolo(true)">{{ $t('actresses.solo') }}</button></div></div>
-      <div v-if="movies.length" class="movie-grid"><MovieCard v-for="movie in movies" :key="movie.id" :movie="movie" /></div><div v-else class="center-state">{{ $t('common.noResults') }}</div><Pagination :page="page" :size="30" :total="total" @change="changePage" />
+    <div v-if="loading" class="center-state">
+      <span class="loading loading-spinner loading-md text-emerald-600"></span>
+      <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
+    </div>
+    <div v-else-if="error" class="center-state">
+      <p class="error-text font-medium">{{ $t('common.error') }}</p>
+      <button class="btn btn-outline btn-sm" @click="load">{{ $t('common.retry') }}</button>
+    </div>
+    <template v-else-if="actress">
+      <div class="actress-profile">
+        <div class="profile-photo">
+          <img v-if="actress.image_url && !broken" :src="actress.image_url" :alt="actress.name" referrerpolicy="no-referrer" @error="broken = true">
+          <UserRound v-else :size="38" />
+        </div>
+        <div>
+          <div class="section-kicker"><Users :size="12" /> LIBREFANZA / PEOPLE</div>
+          <h1>{{ actress.name }}</h1>
+          <span v-if="actress.fanza_id" class="muted font-mono">FANZA #{{ actress.fanza_id }}</span>
+        </div>
+      </div>
+      <div class="section-heading">
+        <div>
+          <span class="section-number">01</span>
+          <h2>{{ $t('actresses.works') }}</h2>
+        </div>
+        <div class="segmented">
+          <button class="btn btn-sm" :class="solo ? 'btn-ghost' : 'btn-active'" @click="setSolo(false)">{{ $t('actresses.allWorks') }}</button>
+          <button class="btn btn-sm" :class="solo ? 'btn-active' : 'btn-ghost'" @click="setSolo(true)">{{ $t('actresses.solo') }}</button>
+        </div>
+      </div>
+      <div v-if="movies.length" class="movie-grid">
+        <MovieCard v-for="movie in movies" :key="movie.id" :movie="movie" />
+      </div>
+      <div v-else class="center-state">
+        <p class="text-slate-500 font-medium">{{ $t('common.noResults') }}</p>
+      </div>
+      <Pagination :page="page" :size="30" :total="total" @change="changePage" />
     </template>
   </div>
 </template>

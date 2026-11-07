@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -29,11 +30,34 @@ func NewCrawlSource(settings ClientSettings, name string) (CrawlSource, error) {
 }
 
 func (p *httpProvider) Page(ctx context.Context, page int) ([]Parsed, error) {
+	items, _, err := p.PageWithStats(ctx, page)
+	return items, err
+}
+
+func (p *httpProvider) PageWithStats(ctx context.Context, page int) ([]Parsed, int, error) {
 	if page < 1 {
-		return nil, errors.New("invalid page")
+		return nil, 0, errors.New("invalid page")
+	}
+	var skipped int
+	items, err := p.withHealth(ctx, func() ([]Parsed, error) {
+		var err error
+		var items []Parsed
+		items, skipped, err = p.page(ctx, page)
+		return items, err
+	})
+	return items, skipped, err
+}
+
+func (p *httpProvider) page(ctx context.Context, page int) ([]Parsed, int, error) {
+	if page < 1 {
+		return nil, 0, errors.New("invalid page")
+	}
+	if p.kind == "javdb" || p.kind == "javbus" || p.kind == "javbooks" || p.kind == "javquery" {
+		return p.newSourcePage(ctx, page)
 	}
 	if p.kind == "avmoo" {
-		return p.avmooPage(ctx, page)
+		items, err := p.avmooPage(ctx, page)
+		return items, 0, err
 	}
 	endpoint := &url.URL{}
 	switch p.kind {
@@ -49,19 +73,19 @@ func (p *httpProvider) Page(ctx context.Context, page int) ([]Parsed, error) {
 		endpoint.Path = "/ja/vl_newrelease.php"
 		endpoint.RawQuery = url.Values{"page": {strconv.Itoa(page)}}.Encode()
 	default:
-		return nil, errors.New("invalid crawl source")
+		return nil, 0, errors.New("invalid crawl source")
 	}
 	endpoint = p.base.ResolveReference(endpoint)
 	body, _, err := p.get(ctx, endpoint.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if isSourceChallenge(body) {
-		return nil, errors.New("source requires verification")
+		return nil, 0, errors.New("source requires verification")
 	}
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
 	if err != nil {
-		return nil, errors.New("invalid source page")
+		return nil, 0, errors.New("invalid source page")
 	}
 	var links []string
 	seen := map[string]bool{}
@@ -96,17 +120,28 @@ func (p *httpProvider) Page(ctx context.Context, page int) ([]Parsed, error) {
 		}
 	})
 	if len(links) > 200 {
-		return nil, errors.New("source page has too many items")
+		return nil, 0, errors.New("source page has too many items")
+	}
+	if len(links) == 0 {
+		container := map[string]string{"libredmm": ".movies.movie-grid", "jable": ".video-list, .list-videos"}[p.kind]
+		if container != "" && doc.Find(container).Length() == 0 {
+			return nil, 0, errors.New("invalid source page")
+		}
 	}
 	items := make([]Parsed, 0, len(links))
+	skipped := 0
 	for _, address := range links {
 		detail := address
 		if p.kind == "libredmm" {
 			detail += ".json"
 		}
-		body, _, err := p.get(ctx, detail, nil)
+		body, status, err := p.get(ctx, detail, nil)
+		if status == http.StatusNotFound || status == http.StatusGone {
+			skipped++
+			continue
+		}
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		var item Parsed
 		if p.kind == "libredmm" {
@@ -115,14 +150,22 @@ func (p *httpProvider) Page(ctx context.Context, page int) ([]Parsed, error) {
 			item, err = ParsePage(p.kind, address, body)
 		}
 		if err != nil {
-			return nil, err
+			if p.kind == "jable" && err.Error() == errInvalidProduct.Error() && !isSourceChallenge(body) {
+				detailDoc, parseErr := goquery.NewDocumentFromReader(bytes.NewReader(body))
+				if parseErr == nil && detailDoc.Find("h4, .video-info, .video-detail").Length() > 0 {
+					skipped++
+					continue
+				}
+				return nil, 0, errors.New("invalid source page")
+			}
+			return nil, 0, err
 		}
 		if p.kind == "javlibrary" && p.settings.JavLibraryCookie != "" {
 			item.RawHTML = ""
 		}
 		items = append(items, item)
 	}
-	return items, nil
+	return items, skipped, nil
 }
 
 func (p *httpProvider) avmooPage(ctx context.Context, page int) ([]Parsed, error) {

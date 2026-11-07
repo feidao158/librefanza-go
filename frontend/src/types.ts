@@ -54,3 +54,37 @@ export interface User {
   email: string
   is_admin: boolean
 }
+
+export interface AnnotationStats {
+  total: number
+  liked: number
+  disliked: number
+  uncertain: number
+  min_required: number
+  ready: boolean
+}
+
+export interface NextAnnotationResponse {
+  movie: Movie | null
+  stats: AnnotationStats
+}
+
+export interface FeedbackResponse {
+  success: boolean
+  stats: AnnotationStats
+  next_movie?: Movie | null
+}
+
+export interface RecommendationResponse {
+  ready: boolean
+  stats: AnnotationStats
+  movies: Movie[]
+}
+
+export interface GorseSettings {
+  entry_point: string
+  api_key?: string
+  api_key_configured: boolean
+  enabled: boolean
+  min_feedback_count: number
+}

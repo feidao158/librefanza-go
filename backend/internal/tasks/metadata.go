@@ -8,12 +8,13 @@ import (
 	jobs "github.com/jdziat/simple-durable-jobs/v4"
 	"github.com/libredmm/librefanza/backend/internal/catalog"
 	"github.com/libredmm/librefanza/backend/internal/logbook"
+	"github.com/libredmm/librefanza/backend/internal/sourcehealth"
 	"github.com/libredmm/librefanza/backend/internal/sources"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-var metadataSources = []string{"fanza", "sod", "mgstage", "fc2", "javlibrary", "avmoo", "jable", "libredmm"}
+var metadataSources = []string{"fanza", "sod", "mgstage", "fc2", "jable", "libredmm", "javdb", "javbooks", "javquery"}
 var ErrStoredSourceInvalid = errors.New("stored source item is invalid")
 
 type MetadataSourceProgress struct {
@@ -50,7 +51,9 @@ type MetadataStatus struct {
 	Status           string `json:"status"`
 	CompletedSources int64  `json:"completed_sources"`
 	FailedSources    int64  `json:"failed_sources"`
+	DeferredSources  int64  `json:"deferred_sources"`
 	TotalSources     int    `json:"total_sources"`
+	CollectionStatus string `json:"collection_status"`
 }
 
 func (m *Manager) EnrichmentStatus(ctx context.Context, id string) (MetadataStatus, error) {
@@ -73,12 +76,40 @@ func (m *Manager) EnrichmentStatus(ctx context.Context, id string) (MetadataStat
 		return MetadataStatus{}, err
 	}
 	status := MetadataStatus{ID: job.ID.String(), Status: string(job.Status), TotalSources: len(metadataSources)}
-	query := m.db.WithContext(ctx).Model(&MetadataSourceProgress{}).Where("job_id = ?", status.ID)
-	if err := query.Where("status = ?", "completed").Count(&status.CompletedSources).Error; err != nil {
+	var current []MetadataSourceProgress
+	if err := m.db.WithContext(ctx).Where("job_id = ? AND source IN ?", status.ID, metadataSources).Find(&current).Error; err != nil {
 		return MetadataStatus{}, err
 	}
-	if err := m.db.WithContext(ctx).Model(&MetadataSourceProgress{}).Where("job_id = ? AND status = ?", status.ID, "failed").Count(&status.FailedSources).Error; err != nil {
+	var historical []MetadataSourceProgress
+	if err := m.db.WithContext(ctx).Where("movie_id = ? AND source IN ? AND job_id LIKE ?", catalog.NormalizeProductID(id), newHistorySources, "history:%").Order("updated_at DESC").Find(&historical).Error; err != nil {
 		return MetadataStatus{}, err
+	}
+	states := make(map[string]string, len(metadataSources))
+	for _, row := range current {
+		states[row.Source] = row.Status
+	}
+	for _, row := range historical {
+		if states[row.Source] == "" {
+			states[row.Source] = row.Status
+		}
+	}
+	for _, state := range states {
+		switch state {
+		case "completed":
+			status.CompletedSources++
+		case "failed":
+			status.FailedSources++
+		case "deferred":
+			status.DeferredSources++
+		}
+	}
+	status.CollectionStatus = "collecting"
+	if status.CompletedSources == int64(status.TotalSources) {
+		status.CollectionStatus = "complete"
+	} else if status.DeferredSources > 0 {
+		status.CollectionStatus = "deferred"
+	} else if status.Status == "failed" || status.Status == "cancelled" {
+		status.CollectionStatus = "failed"
 	}
 	return status, nil
 }
@@ -124,20 +155,18 @@ func (m *Manager) runEnrichment(ctx context.Context, jobID, id string, names []s
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			status = "failed"
+			status = "deferred"
 			logbook.ApplyFailure(&entry, collectErr)
-			failures = append(failures, collectErr)
+			var deferred *sources.DeferredError
+			if !errors.As(collectErr, &deferred) {
+				failures = append(failures, collectErr)
+			}
 			m.RecordSourceFailure(ctx, name, collectErr)
 		}
 		attempts := progress.Attempts + 1
 		progress = MetadataSourceProgress{JobID: jobID, MovieID: id, Source: name, Status: status, Attempts: attempts, Reason: entry.Reason, HTTPStatus: entry.HTTPStatus, Found: found, UpdatedAt: time.Now().UTC()}
 		if err := m.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "job_id"}, {Name: "source"}}, DoUpdates: clause.AssignmentColumns([]string{"movie_id", "status", "attempts", "reason", "http_status", "found", "updated_at"})}).Create(&progress).Error; err != nil {
 			return err
-		}
-		if found && collectErr == nil {
-			if err := m.db.WithContext(ctx).Where("movie_id = ? AND source = ? AND job_id <> ? AND status = ? AND found = ?", id, name, jobID, "completed", true).Delete(&MetadataSourceProgress{}).Error; err != nil {
-				return err
-			}
 		}
 		var saveErr *sources.SaveError
 		if errors.As(collectErr, &saveErr) {
@@ -158,13 +187,71 @@ func (m *Manager) ConfigureMetadata(collect func(context.Context, string, string
 		return protectTaskError(func() error { return m.runBackfill(ctx, reparse) })
 	})
 	m.queue.Register("metadata_backfill_tick", func(ctx context.Context, _ struct{}) error {
-		return protectTaskError(func() error { return m.EnsureBackfill(ctx) })
+		return protectTaskError(func() error {
+			if err := m.EnqueueDeferredMetadata(ctx); err != nil {
+				return err
+			}
+			if m.sourceBackfillReady {
+				if err := m.EnsureSourceBackfill(ctx); err != nil {
+					return err
+				}
+			}
+			if m.sourceProbesReady {
+				if err := m.EnsureSourceProbes(ctx); err != nil {
+					return err
+				}
+			}
+			return m.EnsureBackfill(ctx)
+		})
+	})
+	m.queue.Register("metadata_source_retry", func(ctx context.Context, args metadataRetryArgs) error {
+		return protectTaskError(func() error { return m.runEnrichment(ctx, args.JobID, args.MovieID, []string{args.Source}, collect) })
 	})
 	schedule, err := jobs.Cron("* * * * *")
 	if err != nil {
 		return err
 	}
 	return m.queue.Schedule("metadata_backfill_tick", struct{}{}, schedule, jobs.Unique("metadata_backfill_tick"))
+}
+
+type metadataRetryArgs struct {
+	JobID   string `json:"job_id"`
+	MovieID string `json:"movie_id"`
+	Source  string `json:"source"`
+}
+
+func (m *Manager) EnqueueDeferredMetadata(ctx context.Context) error {
+	var states []sourcehealth.State
+	if err := m.db.WithContext(ctx).Find(&states).Error; err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	bySource := make(map[string]sourcehealth.State, len(states))
+	for _, state := range states {
+		bySource[state.Source] = state
+	}
+	for _, source := range metadataSources {
+		state := bySource[source]
+		if state.NextRetry != nil && state.NextRetry.After(now) {
+			continue
+		}
+		limit := 10
+		if state.Status == "cooldown" {
+			limit = 1
+		}
+		var rows []MetadataSourceProgress
+		if err := m.db.WithContext(ctx).Where("status = ? AND source = ? AND updated_at < ?", "deferred", source, now.Add(-time.Minute)).Order("updated_at").Limit(limit).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			args := metadataRetryArgs{JobID: row.JobID, MovieID: row.MovieID, Source: row.Source}
+			_, err := m.queue.Enqueue(ctx, "metadata_source_retry", args, jobs.QueueOpt("metadata"), jobs.Unique("metadata_retry:"+row.JobID+":"+row.Source), jobs.Retries(3), jobs.Timeout(24*time.Hour))
+			if err != nil && !errors.Is(err, jobs.ErrDuplicateJob) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) EnqueueEnrichment(ctx context.Context, id string) (string, error) {

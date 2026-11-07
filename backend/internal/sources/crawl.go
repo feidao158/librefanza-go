@@ -109,7 +109,7 @@ func CrawlMGStage(ctx context.Context, settings ClientSettings, sink Sink) error
 		}
 		for _, item := range items {
 			if err := sink.Save(ctx, item); err != nil {
-				return err
+				return &SaveError{Err: err}
 			}
 		}
 	}

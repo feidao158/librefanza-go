@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net"
 	"syscall"
+	"time"
 )
 
 type RequestError struct {
-	Reason string
-	Status int
+	Reason  string
+	Status  int
+	RetryAt time.Time
 }
 
 func (e *RequestError) Error() string {

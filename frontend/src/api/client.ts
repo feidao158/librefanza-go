@@ -1,6 +1,17 @@
 export const accessTokenKey = 'librefanza-access-token'
+export const clientIdKey = 'librefanza-client-id'
 let accessToken = window.localStorage.getItem(accessTokenKey) || ''
 const tokenListeners = new Set<(value: string, external: boolean) => void>()
+
+export function currentClientId(): string {
+  if (typeof window === 'undefined') return ''
+  let id = window.localStorage.getItem(clientIdKey) || ''
+  if (!id) {
+    id = 'c_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+    window.localStorage.setItem(clientIdKey, id)
+  }
+  return id
+}
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {
@@ -44,6 +55,8 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}):
   const headers = new Headers(options.headers)
   const sentToken = accessToken
   if (sentToken) headers.set('Authorization', `Bearer ${sentToken}`)
+  const clientId = currentClientId()
+  if (clientId) headers.set('X-Client-ID', clientId)
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const response = await fetch(`/api/v1${path}`, { ...options, headers, credentials: 'include' })
   const isAuthenticationRequest = path === '/auth/sessions' || path === '/users' || path.startsWith('/auth/password-')

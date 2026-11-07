@@ -164,6 +164,18 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			respondError(c, http.StatusNotFound, "not_found")
 			return
 		}
+		var existing jobs.Job
+		if err := db.WithContext(c.Request.Context()).Where("id = ?", id).First(&existing).Error; err != nil {
+			respondError(c, http.StatusNotFound, "not_found")
+			return
+		}
+		if existing.Type == "source_crawl" {
+			var request sources.CrawlRequest
+			if json.Unmarshal(existing.Args, &request) == nil && errors.Is(request.Validate(), sources.ErrSourceRetired) {
+				respondError(c, http.StatusConflict, "source_retired")
+				return
+			}
+		}
 		if _, err := jobs.NewGormStorage(db).RetryJob(c.Request.Context(), id); err != nil {
 			respondError(c, http.StatusConflict, "retry_failed")
 			return
@@ -322,24 +334,6 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 					parsed, err = sources.ParsePage("jable", address, body)
 				}
 			}
-		} else if item.Source == "javlibrary" && item.SourcePageID == nil {
-			cfg, loadErr := settings.NewService(db).Sources(c.Request.Context())
-			if loadErr != nil {
-				err = loadErr
-			} else {
-				var source sources.CrawlSource
-				source, err = sources.NewCrawlSource(cfg, "javlibrary")
-				if err == nil {
-					var items []sources.Parsed
-					items, err = source.Search(c.Request.Context(), item.NormalizedID)
-					if err == nil && len(items) == 0 {
-						err = errors.New("source item missing")
-					}
-					if err == nil {
-						parsed = items[0]
-					}
-				}
-			}
 		} else if item.SourcePageID != nil {
 			var entry adminPage
 			if err = db.Table("source_pages").First(&entry, *item.SourcePageID).Error; err == nil {
@@ -425,6 +419,8 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 
 func crawlErrorCode(value string) string {
 	switch {
+	case strings.Contains(value, "source retired"):
+		return "source_retired"
 	case strings.Contains(value, "source returned HTTP 403"), strings.Contains(value, "source requires verification"):
 		return "source_access_denied"
 	case strings.Contains(value, "source request failed"):

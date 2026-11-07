@@ -71,11 +71,13 @@ onBeforeUnmount(() => {
         <nav class="desktop-nav" aria-label="Main navigation">
           <RouterLink to="/movies">{{ $t('nav.movies') }}</RouterLink>
           <RouterLink to="/actresses">{{ $t('nav.actresses') }}</RouterLink>
+          <RouterLink to="/annotations">{{ $t('nav.annotations') }}</RouterLink>
+          <RouterLink to="/recommendations">{{ $t('nav.recommendations') }}</RouterLink>
           <RouterLink v-if="auth.user?.is_admin" to="/admin/sources">{{ $t('nav.manage') }}</RouterLink>
         </nav>
         <div class="header-actions">
-          <label class="language-select" :title="$t('nav.settings')"><Globe2 :size="17" /><select :value="locale" aria-label="Language" @change="setLanguage(($event.target as HTMLSelectElement).value)"><option value="zh">中文</option><option value="en">EN</option></select></label>
-          <RouterLink v-if="!auth.user" to="/login" class="account-link"><LogIn :size="17" /><span>{{ $t('nav.signIn') }}</span></RouterLink>
+          <label class="language-select" :title="$t('nav.settings')"><Globe2 :size="16" /><select :value="locale" aria-label="Language" @change="setLanguage(($event.target as HTMLSelectElement).value)"><option value="zh">中文</option><option value="en">EN</option></select></label>
+          <RouterLink v-if="!auth.user" to="/login" class="account-link" :aria-label="$t('nav.signIn')"><LogIn :size="16" /><span>{{ $t('nav.signIn') }}</span></RouterLink>
           <div v-else class="dropdown dropdown-end account-dropdown">
             <button tabindex="0" class="account-avatar" :title="auth.user.email">{{ auth.user.email.slice(0, 1).toUpperCase() }}</button>
             <ul tabindex="0" class="dropdown-content menu bg-base-100 shadow-sm account-menu">
@@ -87,7 +89,7 @@ onBeforeUnmount(() => {
           <button class="btn btn-ghost btn-square mobile-menu-button" :aria-label="menuOpen ? 'Close menu' : 'Open menu'" @click="menuOpen = !menuOpen"><X v-if="menuOpen" :size="21" /><Menu v-else :size="21" /></button>
         </div>
       </div>
-      <nav v-if="menuOpen" class="mobile-nav"><RouterLink to="/movies" @click="menuOpen = false">{{ $t('nav.movies') }}</RouterLink><RouterLink to="/actresses" @click="menuOpen = false">{{ $t('nav.actresses') }}</RouterLink><RouterLink v-if="auth.user?.is_admin" to="/admin/sources" @click="menuOpen = false">{{ $t('nav.manage') }}</RouterLink></nav>
+      <nav v-if="menuOpen" class="mobile-nav"><RouterLink to="/movies" @click="menuOpen = false">{{ $t('nav.movies') }}</RouterLink><RouterLink to="/actresses" @click="menuOpen = false">{{ $t('nav.actresses') }}</RouterLink><RouterLink to="/annotations" @click="menuOpen = false">{{ $t('nav.annotations') }}</RouterLink><RouterLink to="/recommendations" @click="menuOpen = false">{{ $t('nav.recommendations') }}</RouterLink><RouterLink v-if="auth.user?.is_admin" to="/admin/sources" @click="menuOpen = false">{{ $t('nav.manage') }}</RouterLink></nav>
     </header>
     <main v-if="ready" class="main-content" :class="{ 'setup-main': isSetup }"><p v-if="logoutFailed" class="error-text">{{ $t('common.error') }}</p><RouterView /></main>
     <main v-else class="startup-state"><div v-if="failed" class="notice-error">{{ $t('common.error') }} <button class="btn btn-sm" @click="bootstrap">{{ $t('common.retry') }}</button></div><span v-else class="loading loading-spinner loading-md"></span></main>

@@ -39,7 +39,7 @@ func TestPostSourceRequestReportsSafeCertificateReason(t *testing.T) {
 func TestCrawlFailureIncludesPageAndPreservesCause(t *testing.T) {
 	cause := errors.New("模拟失败")
 	source := failingPageSource{err: cause}
-	request := CrawlRequest{Source: "avmoo", Mode: "pages", StartPage: 4, EndPage: 4}
+	request := CrawlRequest{Source: "libredmm", Mode: "pages", StartPage: 4, EndPage: 4}
 	err := RunCrawl(context.Background(), request, source, &stubSink{}, CrawlProgress{}, func(CrawlProgress) error { return nil })
 	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "4") {
 		t.Fatalf("采集错误未包含页码或原始原因：%v", err)

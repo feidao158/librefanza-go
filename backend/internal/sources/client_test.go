@@ -78,6 +78,12 @@ func TestSourceRequestsUseBrowserHeadersAndRetryRateLimit(t *testing.T) {
 	}
 }
 
+func TestRateLimitDelayDoesNotOverflow(t *testing.T) {
+	if delay := retryAfter("9223372037", time.Now()); delay <= 0 {
+		t.Fatalf("超大限速时间不应立即重试: %v", delay)
+	}
+}
+
 func TestFC2FetchesDescriptionFromItsOwnFrame(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -112,7 +118,7 @@ func TestSourceCookieIsNotSentToOtherHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := providers[6].(*httpProvider)
+	provider := providers[4].(*httpProvider)
 	if _, _, err := provider.get(context.Background(), foreign.URL, nil); err != nil {
 		t.Fatal(err)
 	}

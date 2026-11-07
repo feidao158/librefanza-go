@@ -81,7 +81,18 @@ func TestParseExistingSourceFixtures(t *testing.T) {
 			if test.source == "javlibrary" && (!strings.HasPrefix(item.Item.CoverImageURL, "https://") || !strings.HasSuffix(item.Item.ThumbnailImageURL, "ps.jpg")) {
 				t.Fatalf("JavLibrary cover URLs invalid: %s %s", item.Item.CoverImageURL, item.Item.ThumbnailImageURL)
 			}
+			if test.source == "fc2" && (item.Item.ReleaseDate == nil || item.Item.ReleaseDate.Format("2006-01-02") != "2022-08-10") {
+				t.Fatalf("FC2 发行日期解析错误: %v", item.Item.ReleaseDate)
+			}
 		})
+	}
+}
+
+func TestFC2ParsesCurrentReleaseDateLayout(t *testing.T) {
+	body := []byte(`<div class="items_article_headerInfo"><h3>标题</h3></div><div class="items_article_softDevice"><p>販売日 : 2022/08/10</p></div><div class="items_article_softDevice"><p>商品ID : FC2 PPV 3069309</p></div>`)
+	item, err := ParsePage("fc2", "https://adult.contents.fc2.com/article/3069309/", body)
+	if err != nil || item.Item.ReleaseDate == nil || item.Item.ReleaseDate.Format("2006-01-02") != "2022-08-10" {
+		t.Fatalf("FC2 发行日期解析错误: %v %v", item.Item.ReleaseDate, err)
 	}
 }
 

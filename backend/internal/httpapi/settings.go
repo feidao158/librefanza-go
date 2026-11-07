@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -36,7 +37,12 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			respondError(c, http.StatusInternalServerError, "settings_unavailable")
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": gin.H{"fanza_configured": value.FanzaAPIID != "" && value.FanzaAffiliateID != "", "proxy_configured": value.ProxyURL != "", "fc2_url": value.FC2URL, "sod_url": value.SODURL, "mgstage_url": value.MGStageURL, "mgstage_series_url": value.MGStageSeriesURL, "jable_url": value.JableURL, "avmoo_url": value.AVMOOURL, "javlibrary_url": value.JavLibraryURL, "libredmm_url": value.LibreDMMURL, "jable_cookie_configured": value.JableCookie != "", "javlibrary_cookie_configured": value.JavLibraryCookie != ""}})
+		health, err := svc.SourceHealth(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "settings_unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"fanza_configured": value.FanzaAPIID != "" && value.FanzaAffiliateID != "", "proxy_configured": value.ProxyURL != "", "fc2_url": value.FC2URL, "sod_url": value.SODURL, "mgstage_url": value.MGStageURL, "mgstage_series_url": value.MGStageSeriesURL, "jable_url": value.JableURL, "libredmm_url": value.LibreDMMURL, "javdb_url": value.JavDBURL, "javbus_url": value.JavBusURL, "javbooks_url": value.JavBooksURL, "javquery_url": value.JavQueryURL, "jable_cookie_configured": value.JableCookie != "", "javdb_cookie_configured": value.JavDBCookie != "", "javbus_cookie_configured": value.JavBusCookie != "", "javbooks_cookie_configured": value.JavBooksCookie != "", "javquery_cookie_configured": value.JavQueryCookie != "", "health": health}})
 	})
 	api.PUT("/admin/settings/sources", func(c *gin.Context) {
 		svc := service(c)
@@ -118,8 +124,18 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		if svc == nil {
 			return
 		}
-		var value tasks.ScheduleSettings
-		if c.ShouldBindJSON(&value) != nil || svc.UpdateSchedules(c.Request.Context(), value) != nil {
+		var input json.RawMessage
+		previous, err := svc.Schedules(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "settings_unavailable")
+			return
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			respondError(c, http.StatusBadRequest, "invalid_settings")
+			return
+		}
+		value, err := tasks.MergeScheduleSettings(previous, input)
+		if err != nil || svc.UpdateSchedules(c.Request.Context(), value) != nil {
 			respondError(c, http.StatusBadRequest, "invalid_settings")
 			return
 		}
@@ -165,5 +181,59 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": true}})
+	})
+	api.GET("/admin/settings/gorse", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		value, err := svc.Gorse(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "settings_unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"entry_point": value.EntryPoint, "api_key_configured": value.APIKey != "", "enabled": value.Enabled, "min_feedback_count": value.MinFeedbackCount}})
+	})
+	api.PUT("/admin/settings/gorse", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		var value settings.GorseSettings
+		if c.ShouldBindJSON(&value) != nil || svc.UpdateGorse(c.Request.Context(), value) != nil {
+			respondError(c, http.StatusBadRequest, "invalid_settings")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": true}})
+	})
+	api.POST("/admin/settings/gorse-checks", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		var input struct {
+			EntryPoint string `json:"entry_point"`
+			APIKey     string `json:"api_key"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.EntryPoint == "" {
+			respondError(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		client := &http.Client{Timeout: 3 * time.Second}
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, input.EntryPoint+"/api/health", nil)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_entry_point")
+			return
+		}
+		if input.APIKey != "" {
+			req.Header.Set("X-API-Key", input.APIKey)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			respondError(c, http.StatusBadGateway, "gorse_unavailable")
+			return
+		}
+		_ = resp.Body.Close()
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"connected": true}})
 	})
 }

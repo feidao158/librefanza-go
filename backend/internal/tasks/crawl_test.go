@@ -50,7 +50,7 @@ func TestCrawlJobDeduplicationAndRetryProgress(t *testing.T) {
 		}
 		return save(sources.CrawlProgress{NextPage: 5, Processed: 12})
 	})
-	request := sources.CrawlRequest{Source: "avmoo", Mode: "full"}
+	request := sources.CrawlRequest{Source: "libredmm", Mode: "full"}
 	id, err := manager.EnqueueCrawl(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestCrawlJobDeduplicationAndRetryProgress(t *testing.T) {
 	if err != nil || again != id {
 		t.Fatalf("重复任务 = %s，错误 = %v", again, err)
 	}
-	if _, err := manager.EnqueueCrawl(context.Background(), sources.CrawlRequest{Source: "avmoo", Mode: "incremental"}); !errors.Is(err, ErrCrawlInProgress) {
+	if _, err := manager.EnqueueCrawl(context.Background(), sources.CrawlRequest{Source: "libredmm", Mode: "incremental"}); !errors.Is(err, ErrCrawlInProgress) {
 		t.Fatalf("并发任务错误 = %v", err)
 	}
 	if err := manager.Start(context.Background()); err != nil {
@@ -90,7 +90,7 @@ func TestCrawlJobDeduplicationAndRetryProgress(t *testing.T) {
 			}
 			var failure, completed bool
 			for _, entry := range entries {
-				if entry.Event == "task_failed" && entry.Source == "avmoo" && entry.Attempt == 1 && entry.Position == 3 && entry.HTTPStatus == 403 && entry.Reason == "http" {
+				if entry.Event == "task_failed" && entry.Source == "libredmm" && entry.Attempt == 1 && entry.Position == 3 && entry.HTTPStatus == 403 && entry.Reason == "http" {
 					failure = true
 				}
 				if entry.Event == "task_completed" && entry.Attempt >= 2 {

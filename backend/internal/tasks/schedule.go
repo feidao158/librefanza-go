@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type Schedule struct {
 	Enabled bool   `json:"enabled"`
 	Cron    string `json:"cron"`
+	Auto    bool   `json:"auto"`
 }
 
 type ScheduleSettings struct {
@@ -26,10 +28,54 @@ type ScheduleSettings struct {
 	AVMOO      Schedule `json:"avmoo"`
 	JavLibrary Schedule `json:"javlibrary"`
 	LibreDMM   Schedule `json:"libredmm"`
+	JavDB      Schedule `json:"javdb"`
+	JavBus     Schedule `json:"javbus"`
+	JavBooks   Schedule `json:"javbooks"`
+	JavQuery   Schedule `json:"javquery"`
 }
 
 func DefaultScheduleSettings() ScheduleSettings {
-	return ScheduleSettings{Timezone: "America/Los_Angeles", Actress: Schedule{Enabled: true, Cron: "0 0 * * *"}, Fanza: Schedule{Enabled: true, Cron: "*/30 * * * *"}, MGStage: Schedule{Enabled: true, Cron: "*/30 * * * *"}, Jable: Schedule{Cron: "0 3 * * *"}, AVMOO: Schedule{Cron: "0 4 * * *"}, JavLibrary: Schedule{Cron: "0 5 * * *"}, LibreDMM: Schedule{Cron: "0 6 * * *"}}
+	return ScheduleSettings{Timezone: "America/Los_Angeles", Actress: Schedule{Enabled: true, Cron: "0 0 * * *"}, Fanza: Schedule{Enabled: true, Cron: "*/30 * * * *"}, MGStage: Schedule{Enabled: true, Cron: "*/30 * * * *"}, Jable: Schedule{Cron: "0 3 * * *"}, LibreDMM: Schedule{Cron: "0 6 * * *"}, JavDB: Schedule{Cron: "*/30 * * * *", Auto: true}, JavBus: Schedule{Cron: "*/30 * * * *", Auto: true}, JavBooks: Schedule{Cron: "*/30 * * * *", Auto: true}, JavQuery: Schedule{Cron: "*/30 * * * *", Auto: true}}
+}
+
+func (s *ScheduleSettings) NewSourceSchedule(source string) *Schedule {
+	switch source {
+	case "javdb":
+		return &s.JavDB
+	case "javbooks":
+		return &s.JavBooks
+	case "javquery":
+		return &s.JavQuery
+	default:
+		return nil
+	}
+}
+
+func MergeScheduleSettings(previous ScheduleSettings, input []byte) (ScheduleSettings, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil || fields == nil {
+		return ScheduleSettings{}, errors.New("invalid schedule settings")
+	}
+	merged := previous
+	if err := json.Unmarshal(input, &merged); err != nil {
+		return ScheduleSettings{}, err
+	}
+	for _, source := range []string{"javdb", "javbooks", "javquery"} {
+		raw, exists := fields[source]
+		if !exists {
+			continue
+		}
+		var scheduleFields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &scheduleFields); err != nil || scheduleFields == nil {
+			return ScheduleSettings{}, errors.New("invalid schedule settings")
+		}
+		_, hasAuto := scheduleFields["auto"]
+		_, hasEnabled := scheduleFields["enabled"]
+		if !hasAuto && hasEnabled && previous.NewSourceSchedule(source).Enabled != merged.NewSourceSchedule(source).Enabled {
+			merged.NewSourceSchedule(source).Auto = false
+		}
+	}
+	return merged, nil
 }
 
 func DueSchedules(settings ScheduleSettings, now time.Time) ([]string, error) {
@@ -41,7 +87,7 @@ func DueSchedules(settings ScheduleSettings, now time.Time) ([]string, error) {
 	for _, entry := range []struct {
 		name     string
 		schedule Schedule
-	}{{"actress_crawl", settings.Actress}, {"fanza_crawl", settings.Fanza}, {"mgstage_crawl", settings.MGStage}, {"jable_crawl", settings.Jable}, {"avmoo_crawl", settings.AVMOO}, {"javlibrary_crawl", settings.JavLibrary}, {"libredmm_crawl", settings.LibreDMM}} {
+	}{{"actress_crawl", settings.Actress}, {"fanza_crawl", settings.Fanza}, {"mgstage_crawl", settings.MGStage}, {"jable_crawl", settings.Jable}, {"libredmm_crawl", settings.LibreDMM}, {"javdb_crawl", settings.JavDB}, {"javbooks_crawl", settings.JavBooks}, {"javquery_crawl", settings.JavQuery}} {
 		if !entry.schedule.Enabled {
 			continue
 		}
@@ -62,7 +108,7 @@ func ValidateScheduleSettings(settings ScheduleSettings) error {
 	if err != nil {
 		return errors.New("invalid schedule timezone")
 	}
-	for _, value := range []Schedule{settings.Actress, settings.Fanza, settings.MGStage, settings.Jable, settings.AVMOO, settings.JavLibrary, settings.LibreDMM} {
+	for _, value := range []Schedule{settings.Actress, settings.Fanza, settings.MGStage, settings.Jable, settings.LibreDMM, settings.JavDB, settings.JavBooks, settings.JavQuery} {
 		if !value.Enabled && value.Cron == "" {
 			continue
 		}
@@ -84,7 +130,7 @@ func NextSchedules(settings ScheduleSettings, now time.Time) (map[string]time.Ti
 		schedule Schedule
 	}{
 		{"actress", settings.Actress}, {"fanza", settings.Fanza}, {"mgstage", settings.MGStage},
-		{"jable", settings.Jable}, {"avmoo", settings.AVMOO}, {"javlibrary", settings.JavLibrary}, {"libredmm", settings.LibreDMM},
+		{"jable", settings.Jable}, {"libredmm", settings.LibreDMM}, {"javdb", settings.JavDB}, {"javbooks", settings.JavBooks}, {"javquery", settings.JavQuery},
 	} {
 		if !entry.schedule.Enabled {
 			continue
@@ -107,7 +153,14 @@ func (m *Manager) ConfigureMaintenance(load func(context.Context) (ScheduleSetti
 	for name, handler := range handlers {
 		handler := handler
 		m.queue.Register(name, func(ctx context.Context, _ struct{}) error {
-			return protectTaskError(func() error { return handler(ctx) })
+			return protectTaskError(func() error {
+				err := handler(ctx)
+				var deferred *sources.DeferredError
+				if errors.As(err, &deferred) {
+					return nil
+				}
+				return err
+			})
 		})
 	}
 	m.queue.Register("maintenance_tick", func(ctx context.Context, _ struct{}) error {
@@ -121,7 +174,7 @@ func (m *Manager) ConfigureMaintenance(load func(context.Context) (ScheduleSetti
 				return err
 			}
 			for _, name := range due {
-				if name == "jable_crawl" || name == "avmoo_crawl" || name == "javlibrary_crawl" || name == "libredmm_crawl" {
+				if name == "jable_crawl" || name == "libredmm_crawl" || name == "javdb_crawl" || name == "javbus_crawl" || name == "javbooks_crawl" || name == "javquery_crawl" {
 					_, err := m.EnqueueCrawl(ctx, sources.CrawlRequest{Source: strings.TrimSuffix(name, "_crawl"), Mode: "incremental"})
 					if err != nil && !errors.Is(err, ErrCrawlInProgress) {
 						return err

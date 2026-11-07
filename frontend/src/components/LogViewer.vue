@@ -65,7 +65,7 @@ watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; vo
     </div>
     <form class="log-filters" @submit.prevent="search">
       <label class="field"><span>{{ $t('logs.level') }}</span><select v-model="filters.level" name="level" class="select select-sm"><option value="">{{ $t('common.all') }}</option><option value="error">{{ $t('logs.levels.error') }}</option><option value="warn">{{ $t('logs.levels.warn') }}</option><option value="info">{{ $t('logs.levels.info') }}</option></select></label>
-      <label class="field"><span>{{ $t('common.source') }}</span><select v-model="filters.source" name="source" class="select select-sm"><option value="">{{ $t('common.all') }}</option><option v-for="source in ['fanza', 'sod', 'mgstage', 'fc2', 'jable', 'avmoo', 'javlibrary', 'libredmm']" :key="source" :value="source">{{ source.toUpperCase() }}</option></select></label>
+      <label class="field"><span>{{ $t('common.source') }}</span><select v-model="filters.source" name="source" class="select select-sm"><option value="">{{ $t('common.all') }}</option><option v-for="source in ['fanza', 'sod', 'mgstage', 'fc2', 'jable', 'avmoo', 'javlibrary', 'libredmm', 'javdb', 'javbus', 'javbooks', 'javquery']" :key="source" :value="source">{{ source.toUpperCase() }}</option></select></label>
       <label class="field log-task-filter"><span>{{ $t('logs.taskID') }}</span><input v-model="filters.task_id" name="task_id" class="input input-sm" maxlength="36" :placeholder="$t('logs.taskID')"></label>
       <button class="btn btn-sm search-button" :disabled="busy"><Search :size="15" />{{ $t('common.filter') }}</button>
     </form>
@@ -77,7 +77,7 @@ watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; vo
         <div class="log-time"><time :datetime="entry.created_at">{{ formatTime(entry.created_at) }}</time><span class="log-level" :class="`log-level-${entry.level}`">{{ $te(`logs.levels.${entry.level}`) ? $t(`logs.levels.${entry.level}`) : entry.level }}</span></div>
         <div class="log-detail">
           <div class="log-event">{{ $te(`logs.events.${entry.event}`) ? $t(`logs.events.${entry.event}`) : entry.event }}</div>
-          <div v-if="entry.reason" class="log-reason">{{ $te(`logs.reasons.${entry.reason}`) ? $t(`logs.reasons.${entry.reason}`) : $t('logs.reasons.unknown') }}<span v-if="entry.http_status"> HTTP {{ entry.http_status }}</span></div>
+          <div v-if="entry.reason" class="log-reason">{{ $te(`logs.reasons.${entry.reason}`) ? $t(`logs.reasons.${entry.reason}`) : $te(`sourceHealth.${entry.reason}`) ? $t(`sourceHealth.${entry.reason}`) : $t('logs.reasons.unknown') }}<span v-if="entry.http_status"> HTTP {{ entry.http_status }}</span></div>
           <div class="log-meta">
             <span v-if="entry.source">{{ entry.source.toUpperCase() }}</span>
             <span v-if="entry.task_type">{{ $te(`jobs.types.${entry.task_type}`) ? $t(`jobs.types.${entry.task_type}`) : entry.task_type }}</span>

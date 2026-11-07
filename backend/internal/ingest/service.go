@@ -66,14 +66,14 @@ func (s *Service) Save(ctx context.Context, parsed sources.Parsed) error {
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var previous catalog.SourceItem
-		err := tx.Where("source = ? AND external_id = ?", item.Source, item.ExternalID).First(&previous).Error
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source = ? AND external_id = ?", item.Source, item.ExternalID).First(&previous).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		if item.Description == "" {
 			item.Description = previous.Description
 		}
-		if item.CoverImageURL == "" {
+		if item.CoverImageURL == "" || previous.CoverIsImproved && previous.CoverImageURL != "" {
 			item.CoverImageURL = previous.CoverImageURL
 		}
 		if item.ThumbnailImageURL == "" {

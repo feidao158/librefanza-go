@@ -11,6 +11,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/database"
 	"github.com/libredmm/librefanza/backend/internal/mailer"
 	"github.com/libredmm/librefanza/backend/internal/setup"
+	"github.com/libredmm/librefanza/backend/internal/sourcehealth"
 	"github.com/libredmm/librefanza/backend/internal/sources"
 	"github.com/libredmm/librefanza/backend/internal/tasks"
 	"gorm.io/gorm"
@@ -55,7 +56,12 @@ func (s *Service) Sources(ctx context.Context) (sources.ClientSettings, error) {
 	result := sources.ClientSettings{FanzaAPIID: os.Getenv("FANZA_API_ID"), FanzaAffiliateID: os.Getenv("FANZA_AFFILIATE_ID"), ProxyURL: os.Getenv("PROXY_URL"), FC2URL: os.Getenv("FC2_BASE_URL"), MGStageSeriesURL: os.Getenv("MGSTAGE_SERIES_URL")}
 	_, err := s.load(ctx, "sources", &result)
 	result.RequestLimiter = database.NewSourceRateLimiter(s.db)
+	result.Health = sourcehealth.New(s.db)
 	return result, err
+}
+
+func (s *Service) SourceHealth(ctx context.Context) ([]sourcehealth.State, error) {
+	return sourcehealth.New(s.db).List(ctx)
 }
 
 func (s *Service) UpdateSources(ctx context.Context, input sources.ClientSettings) error {
@@ -86,6 +92,23 @@ func (s *Service) UpdateSources(ctx context.Context, input sources.ClientSetting
 		input.JavLibraryCookie = previous.JavLibraryCookie
 	}
 	input.ClearJableCookie, input.ClearJavLibraryCookie = false, false
+	for _, entry := range []struct {
+		current  *string
+		previous string
+		clear    *bool
+	}{
+		{&input.JavDBCookie, previous.JavDBCookie, &input.ClearJavDBCookie},
+		{&input.JavBusCookie, previous.JavBusCookie, &input.ClearJavBusCookie},
+		{&input.JavBooksCookie, previous.JavBooksCookie, &input.ClearJavBooksCookie},
+		{&input.JavQueryCookie, previous.JavQueryCookie, &input.ClearJavQueryCookie},
+	} {
+		if *entry.clear {
+			*entry.current = ""
+		} else if *entry.current == "" {
+			*entry.current = entry.previous
+		}
+		*entry.clear = false
+	}
 	if _, err := sources.NewProviders(input); err != nil {
 		return err
 	}
@@ -123,7 +146,19 @@ func (s *Service) UpdateRedis(ctx context.Context, input config.Redis) error {
 func (s *Service) Schedules(ctx context.Context) (tasks.ScheduleSettings, error) {
 	result := tasks.DefaultScheduleSettings()
 	_, err := s.load(ctx, "schedules", &result)
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	states, err := sourcehealth.New(s.db).List(ctx)
+	if err != nil {
+		return result, err
+	}
+	for _, state := range states {
+		if schedule := result.NewSourceSchedule(state.Source); schedule != nil && schedule.Auto && state.Verified {
+			schedule.Enabled = true
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) UpdateSchedules(ctx context.Context, input tasks.ScheduleSettings) error {
@@ -151,4 +186,45 @@ func (s *Service) UpdateSMTP(ctx context.Context, input mailer.Settings) error {
 		return err
 	}
 	return s.save(ctx, "smtp", input)
+}
+
+// GorseSettings Gorse 推荐系统配置
+type GorseSettings struct {
+	EntryPoint       string `json:"entry_point"`
+	APIKey           string `json:"api_key"`
+	Enabled          bool   `json:"enabled"`
+	MinFeedbackCount int    `json:"min_feedback_count"`
+}
+
+// Gorse 读取 Gorse 推荐配置
+func (s *Service) Gorse(ctx context.Context) (GorseSettings, error) {
+	result := GorseSettings{
+		EntryPoint:       os.Getenv("GORSE_ENTRY_POINT"),
+		APIKey:           os.Getenv("GORSE_API_KEY"),
+		Enabled:          os.Getenv("GORSE_ENTRY_POINT") != "",
+		MinFeedbackCount: 5,
+	}
+	_, err := s.load(ctx, "gorse", &result)
+	if result.MinFeedbackCount <= 0 {
+		result.MinFeedbackCount = 5
+	}
+	return result, err
+}
+
+// UpdateGorse 更新 Gorse 推荐配置
+func (s *Service) UpdateGorse(ctx context.Context, input GorseSettings) error {
+	previous, err := s.Gorse(ctx)
+	if err != nil {
+		return err
+	}
+	if input.APIKey == "" {
+		input.APIKey = previous.APIKey
+	}
+	if input.EntryPoint == "" {
+		input.EntryPoint = previous.EntryPoint
+	}
+	if input.MinFeedbackCount <= 0 {
+		input.MinFeedbackCount = 5
+	}
+	return s.save(ctx, "gorse", input)
 }

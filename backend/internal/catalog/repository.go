@@ -40,6 +40,7 @@ type SourceItem struct {
 	SourceURL          string     `json:"source_url"`
 	CoverImageURL      string     `json:"cover_image_url"`
 	ThumbnailImageURL  string     `json:"thumbnail_image_url"`
+	CoverIsImproved    bool       `json:"-"`
 	MetadataJSON       string     `json:"-"`
 	RawJSON            string     `json:"-"`
 	CreatedAt          time.Time  `json:"created_at"`
@@ -147,7 +148,7 @@ func (r *Repository) Movies(ctx context.Context, query MovieQuery) ([]Movie, int
 	if err := db.Offset((page - 1) * size).Limit(size).Find(&movies).Error; err != nil {
 		return nil, 0, err
 	}
-	if err := r.populate(ctx, movies, false); err != nil {
+	if err := r.Populate(ctx, movies, false); err != nil {
 		return nil, 0, err
 	}
 	return movies, total, nil
@@ -164,7 +165,7 @@ func (r *Repository) Movie(ctx context.Context, id string) (Movie, error) {
 		return Movie{}, err
 	}
 	items := []Movie{movie}
-	if err := r.populate(ctx, items, true); err != nil {
+	if err := r.Populate(ctx, items, true); err != nil {
 		return Movie{}, err
 	}
 	if items[0].PreferredItem == nil {
@@ -190,7 +191,8 @@ func (r *Repository) SourceItem(ctx context.Context, id uint64) (SourceItem, err
 	return item, nil
 }
 
-func (r *Repository) populate(ctx context.Context, movies []Movie, includeVersions bool) error {
+// Populate 批量组装影片来源与首选展示数据
+func (r *Repository) Populate(ctx context.Context, movies []Movie, includeVersions bool) error {
 	ids := make([]string, 0, len(movies))
 	for _, movie := range movies {
 		ids = append(ids, movie.NormalizedID)
@@ -440,7 +442,7 @@ func (r *Repository) filmography(ctx context.Context, actress Actress, solo bool
 		return []Movie{}, total, nil
 	}
 	movies = movies[start:min(start+size, len(movies))]
-	if err := r.populate(ctx, movies, false); err != nil {
+	if err := r.Populate(ctx, movies, false); err != nil {
 		return nil, 0, err
 	}
 	return movies, total, nil

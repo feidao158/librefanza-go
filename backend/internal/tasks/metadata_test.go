@@ -155,6 +155,57 @@ func TestMetadataRecentSourceIsSkippedAcrossJobs(t *testing.T) {
 	}
 }
 
+func TestEnrichmentStatusIncludesHistoricalSourceBackfill(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(db, func(context.Context, string) (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ConfigureMetadata(func(context.Context, string, string) (bool, error) { return false, nil }, func(context.Context, catalog.SourceItem) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprintf("HISTORYSTATUS-%d", time.Now().UnixNano())
+	movie := catalog.Movie{NormalizedID: id, CompressedID: id}
+	if err := db.Create(&movie).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Delete(&movie)
+	jobID, err := manager.EnqueueEnrichment(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("unique_key = ?", "metadata_enrich:"+id).Delete(&jobs.Job{})
+	defer db.Where("movie_id = ?", id).Delete(&MetadataSourceProgress{})
+	for _, source := range metadataSources {
+		progressID := jobID
+		for _, name := range newHistorySources {
+			if source == name {
+				progressID = fmt.Sprintf("history:%s:%d", source, movie.ID)
+			}
+		}
+		if err := db.Create(&MetadataSourceProgress{JobID: progressID, MovieID: id, Source: source, Status: "completed", UpdatedAt: time.Now().UTC()}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, err := manager.EnrichmentStatus(context.Background(), id)
+	if err != nil || status.CollectionStatus != "complete" || status.CompletedSources != int64(len(metadataSources)) {
+		t.Fatalf("历史补采未计入影片状态: %+v %v", status, err)
+	}
+}
+
 func TestMetadataBackfillResumesAfterCancellation(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {

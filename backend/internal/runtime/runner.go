@@ -13,6 +13,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/ingest"
 	"github.com/libredmm/librefanza/backend/internal/logbook"
 	"github.com/libredmm/librefanza/backend/internal/settings"
+	"github.com/libredmm/librefanza/backend/internal/sourcehealth"
 	"github.com/libredmm/librefanza/backend/internal/sources"
 	"github.com/libredmm/librefanza/backend/internal/tasks"
 )
@@ -87,16 +88,23 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 		sink := ingest.NewService(db)
 		switch kind {
 		case "fanza_crawl":
-			return sources.CrawlFanza(ctx, cfg, 3, sink)
+			return sources.RunSourceTask(ctx, cfg, "fanza", func() error { return sources.CrawlFanza(ctx, cfg, 3, sink) })
 		case "mgstage_crawl":
-			return sources.CrawlMGStage(ctx, cfg, sink)
+			return sources.RunSourceTask(ctx, cfg, "mgstage", func() error { return sources.CrawlMGStage(ctx, cfg, sink) })
 		case "actress_crawl":
 			var count int64
 			if err := db.WithContext(ctx).Model(&catalog.Actress{}).Count(&count).Error; err != nil {
 				return err
 			}
 			offset := int(count) - 999
-			return sources.CrawlActresses(ctx, cfg, offset, func(record sources.ActressRecord) error { return sink.SaveActress(ctx, record) })
+			return sources.RunSourceTask(ctx, cfg, "fanza", func() error {
+				return sources.CrawlActresses(ctx, cfg, offset, func(record sources.ActressRecord) error {
+					if err := sink.SaveActress(ctx, record); err != nil {
+						return &sources.SaveError{Err: err}
+					}
+					return nil
+				})
+			})
 		case "rebuild_movies":
 			return sink.RebuildMovies(ctx)
 		default:
@@ -112,9 +120,16 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 		if err != nil {
 			return err
 		}
-		return sources.RunCrawl(ctx, request, source, ingest.NewService(db), progress, save)
+		var sink sources.Sink = ingest.NewService(db)
+		if request.Mode != "ids" {
+			switch request.Source {
+			case "javdb", "javbooks", "javquery":
+				sink = &verifiedCrawlSink{sink: sink, source: request.Source, mark: sourcehealth.New(db).MarkVerified}
+			}
+		}
+		return sources.RunCrawl(ctx, request, source, sink, progress, save)
 	})
-	if err := manager.ConfigureMetadata(func(ctx context.Context, id, source string) (bool, error) {
+	collectMetadata := func(ctx context.Context, id, source string) (bool, error) {
 		cfg, err := settings.NewService(db).Sources(ctx)
 		if err != nil {
 			return false, err
@@ -129,7 +144,8 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 			}
 		}
 		return false, errors.New("invalid metadata source")
-	}, func(ctx context.Context, item catalog.SourceItem) error {
+	}
+	if err := manager.ConfigureMetadata(collectMetadata, func(ctx context.Context, item catalog.SourceItem) error {
 		err := ingest.NewService(db).ReparseSaved(ctx, item)
 		if errors.Is(err, ingest.ErrStoredSourceInvalid) {
 			return tasks.ErrStoredSourceInvalid
@@ -138,6 +154,30 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 	}); err != nil {
 		return nil, err
 	}
+	manager.ConfigureSourceBackfill(collectMetadata, func(ctx context.Context, item catalog.SourceItem) error {
+		cfg, err := settings.NewService(db).Sources(ctx)
+		if err != nil {
+			return err
+		}
+		return ingest.NewService(db).ImproveCover(ctx, cfg, item)
+	})
+	manager.ConfigureSourceProbes(func(ctx context.Context) (tasks.ScheduleSettings, error) {
+		return settings.NewService(db).Schedules(ctx)
+	}, func(ctx context.Context, source string) error {
+		cfg, err := settings.NewService(db).Sources(ctx)
+		if err != nil {
+			return err
+		}
+		item, err := sources.ProbeSource(ctx, cfg, source)
+		if err != nil {
+			manager.RecordSourceFailure(ctx, source, err)
+			return err
+		}
+		if err := ingest.NewService(db).Save(ctx, item); err != nil {
+			return &sources.SaveError{Err: err}
+		}
+		return sourcehealth.New(db).MarkVerified(ctx, source)
+	})
 	if err := manager.ConfigureMaintenance(func(ctx context.Context) (tasks.ScheduleSettings, error) {
 		return settings.NewService(db).Schedules(ctx)
 	}, map[string]func(context.Context) error{

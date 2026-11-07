@@ -10,10 +10,10 @@ WORKDIR /work/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 go build -trimpath -o /out/librefanza ./cmd/server
+RUN CGO_ENABLED=0 GOMAXPROCS=2 go build -p 2 -trimpath -o /out/librefanza ./cmd/server
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata && addgroup -S app && adduser -S -G app app && mkdir -p /data /app/frontend && chown -R app:app /data /app
+RUN apk add --no-cache ca-certificates tzdata chromium && addgroup -S app && adduser -S -G app app && mkdir -p /data /app/frontend && chown -R app:app /data /app
 COPY --from=backend /out/librefanza /app/librefanza
 COPY --from=frontend /work/frontend/dist/ /app/frontend/
 USER app

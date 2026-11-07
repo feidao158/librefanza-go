@@ -89,6 +89,44 @@ func TestSaveUpdatesPreferredMovieAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRepairedCoverSurvivesLaterSourceUpdate(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprintf("COVERPROTECT-%d", time.Now().UnixNano())
+	defer db.Where("normalized_id = ?", id).Delete(&catalog.Movie{})
+	defer db.Where("normalized_id = ?", id).Delete(&catalog.SourceItem{})
+	service := NewService(db)
+	item := sources.Parsed{Item: catalog.SourceItem{Source: "libredmm", ExternalID: id, NormalizedID: id, Title: "标题", CoverImageURL: "https://example.com/small.jpg"}}
+	if err := service.Save(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	var stored catalog.SourceItem
+	if err := db.Where("source = ? AND external_id = ?", "libredmm", id).First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.saveImprovedCover(context.Background(), stored, "https://example.com/large.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Save(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("source = ? AND external_id = ?", "libredmm", id).First(&stored).Error; err != nil || stored.CoverImageURL != "https://example.com/large.jpg" {
+		t.Fatalf("高清封面被旧数据覆盖: %s %v", stored.CoverImageURL, err)
+	}
+}
+
 func TestRebuildRecomputesMovieData(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {

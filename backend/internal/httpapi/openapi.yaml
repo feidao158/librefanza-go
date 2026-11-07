@@ -13,6 +13,7 @@ tags:
   - name: 认证
   - name: 影片与演员
   - name: 管理
+  - name: 推荐与人工标注
 paths:
   /openapi.yaml:
     get:
@@ -153,6 +154,68 @@ paths:
         - { name: q, in: query, required: true, schema: { type: string } }
       responses:
         '200': { description: 返回 data.valid 和 data.normalized }
+  /annotations/next:
+    get:
+      tags: [推荐与人工标注]
+      summary: 随机获取待人工标注番号
+      parameters:
+        - name: exclude
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: 返回待标注影片与当前统计
+  /annotations/feedback:
+    post:
+      tags: [推荐与人工标注]
+      summary: 提交人工标注选项
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [normalized_id, action]
+              properties:
+                normalized_id: { type: string }
+                action: { type: string, enum: [like, dislike, uncertain] }
+      responses:
+        '200':
+          description: 标注保存成功，返回更新统计与下一部影片
+  /annotations/stats:
+    get:
+      tags: [推荐与人工标注]
+      summary: 获取当前用户标注统计与推荐就绪状态
+      responses:
+        '200':
+          description: 返回统计信息
+  /recommendations:
+    get:
+      tags: [推荐与人工标注]
+      summary: 猜你喜欢：获取个性化推荐影片列表
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 返回猜你喜欢推荐影片列表与状态
+  /recommendations/feedback:
+    post:
+      tags: [推荐与人工标注]
+      summary: 在猜你喜欢页面提交交互反馈
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [normalized_id, action]
+              properties:
+                normalized_id: { type: string }
+                action: { type: string, enum: [like, dislike, uncertain] }
+      responses:
+        '200':
+          description: 反馈保存成功
   /movies:
     get:
       tags: [影片与演员]
@@ -195,7 +258,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/ID' }]
       responses:
         '200':
-          description: 任务状态及已完成和失败的来源数量
+          description: 任务状态、已完成来源数量及延期来源数量
           content:
             application/json:
               schema:
@@ -412,12 +475,24 @@ paths:
       tags: [管理]
       summary: 获取定时任务配置
       security: [{ bearerAuth: [] }]
-      responses: { '200': { description: 时区与 Cron 配置 } }
+      responses:
+        '200':
+          description: 时区与 Cron 配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScheduleSettings' }
     put:
       tags: [管理]
       summary: 更新定时任务配置
       security: [{ bearerAuth: [] }]
-      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleSettings' }
       responses: { '200': { description: 更新成功 } }
   /admin/settings/smtp:
     get:
@@ -431,6 +506,25 @@ paths:
       security: [{ bearerAuth: [] }]
       requestBody: { $ref: '#/components/requestBodies/Settings' }
       responses: { '200': { description: 更新成功 } }
+  /admin/settings/gorse:
+    get:
+      tags: [管理]
+      summary: 获取 Gorse 推荐系统配置
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Gorse 配置 } }
+    put:
+      tags: [管理]
+      summary: 更新 Gorse 推荐系统配置
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 更新成功 } }
+  /admin/settings/gorse-checks:
+    post:
+      tags: [管理]
+      summary: 测试 Gorse 推荐系统连接
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/Settings' }
+      responses: { '200': { description: 连接测试成功 } }
   /admin/source-items:
     get:
       tags: [管理]
@@ -549,7 +643,7 @@ paths:
               type: object
               required: [source, mode]
               properties:
-                source: { type: string, enum: [jable, avmoo, javlibrary, libredmm] }
+                source: { type: string, enum: [jable, libredmm, javdb, javbooks, javquery] }
                 mode: { type: string, enum: [incremental, full, pages, dates, ids] }
                 start_page: { type: integer, minimum: 1 }
                 end_page: { type: integer, minimum: 1 }
@@ -573,7 +667,7 @@ paths:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/PageSize' }
         - { name: level, in: query, schema: { type: string, enum: [info, warn, error] } }
-        - { name: source, in: query, schema: { type: string, enum: [fanza, sod, mgstage, fc2, jable, avmoo, javlibrary, libredmm] } }
+        - { name: source, in: query, schema: { type: string, enum: [fanza, sod, mgstage, fc2, jable, avmoo, javlibrary, libredmm, javdb, javbus, javbooks, javquery] } }
         - { name: task_id, in: query, schema: { type: string, format: uuid } }
       responses:
         '200':
@@ -598,7 +692,24 @@ paths:
         - { name: status, in: query, schema: { type: string } }
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/PageSize' }
-      responses: { '200': { description: 任务列表 } }
+      responses:
+        '200':
+          description: 任务列表，来源采集任务包含采集进度
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        type: { type: string }
+                        status: { type: string }
+                        progress: { $ref: '#/components/schemas/CrawlProgress' }
+                  meta: { $ref: '#/components/schemas/Pagination' }
   /admin/jobs/{id}/retries:
     post:
       tags: [管理]
@@ -664,7 +775,21 @@ components:
         status: { type: string }
         completed_sources: { type: integer }
         failed_sources: { type: integer }
+        deferred_sources: { type: integer, description: 暂时不可用并等待恢复的来源数 }
         total_sources: { type: integer }
+        collection_status: { type: string, enum: [collecting, deferred, complete, failed], description: 采集整体进度，与任务执行状态分开 }
+    CrawlProgress:
+      type: object
+      properties:
+        job_id: { type: string }
+        source: { type: string }
+        mode: { type: string }
+        next_page: { type: integer }
+        next_number: { type: integer }
+        processed: { type: integer }
+        undated: { type: integer }
+        skipped: { type: integer, description: 已跳过的无效详情数 }
+        updated_at: { type: string, format: date-time }
     MetadataBackfill:
       type: object
       properties:
@@ -703,11 +828,17 @@ components:
         mgstage_url: { type: string }
         mgstage_series_url: { type: string }
         jable_url: { type: string }
-        avmoo_url: { type: string }
-        javlibrary_url: { type: string }
         libredmm_url: { type: string }
+        javdb_url: { type: string }
+        javbus_url: { type: string }
+        javbooks_url: { type: string }
+        javquery_url: { type: string }
         jable_cookie_configured: { type: boolean }
-        javlibrary_cookie_configured: { type: boolean }
+        javdb_cookie_configured: { type: boolean }
+        javbus_cookie_configured: { type: boolean }
+        javbooks_cookie_configured: { type: boolean }
+        javquery_cookie_configured: { type: boolean }
+        health: { type: array, items: { $ref: '#/components/schemas/SourceHealth' } }
     SourceSettingsInput:
       type: object
       properties:
@@ -720,13 +851,52 @@ components:
         mgstage_url: { type: string }
         mgstage_series_url: { type: string }
         jable_url: { type: string }
-        avmoo_url: { type: string }
-        javlibrary_url: { type: string }
         libredmm_url: { type: string }
+        javdb_url: { type: string }
+        javbus_url: { type: string }
+        javbooks_url: { type: string }
+        javquery_url: { type: string }
         jable_cookie: { type: string, format: password }
-        javlibrary_cookie: { type: string, format: password }
+        javdb_cookie: { type: string, format: password }
+        javbus_cookie: { type: string, format: password }
+        javbooks_cookie: { type: string, format: password }
+        javquery_cookie: { type: string, format: password }
         clear_jable_cookie: { type: boolean }
-        clear_javlibrary_cookie: { type: boolean }
+        clear_javdb_cookie: { type: boolean }
+        clear_javbus_cookie: { type: boolean }
+        clear_javbooks_cookie: { type: boolean }
+        clear_javquery_cookie: { type: boolean }
+    SourceHealth:
+      type: object
+      properties:
+        source: { type: string }
+        status: { type: string, enum: [unknown, available, degraded, cooldown] }
+        verified: { type: boolean, description: 是否已验证列表、详情及数据保存 }
+        failures: { type: integer }
+        reason: { type: string, description: 安全分类后的失败原因 }
+        http_status: { type: integer, description: HTTP 状态码，0 表示无状态码 }
+        last_checked: { type: string, format: date-time, nullable: true }
+        next_retry: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+    Schedule:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        cron: { type: string }
+        auto: { type: boolean, description: 新来源验证后自动启用；管理员手动调整时设置为 false }
+    ScheduleSettings:
+      type: object
+      properties:
+        timezone: { type: string }
+        actress: { $ref: '#/components/schemas/Schedule' }
+        fanza: { $ref: '#/components/schemas/Schedule' }
+        mgstage: { $ref: '#/components/schemas/Schedule' }
+        jable: { $ref: '#/components/schemas/Schedule' }
+        libredmm: { $ref: '#/components/schemas/Schedule' }
+        javdb: { $ref: '#/components/schemas/Schedule' }
+        javbus: { $ref: '#/components/schemas/Schedule' }
+        javbooks: { $ref: '#/components/schemas/Schedule' }
+        javquery: { $ref: '#/components/schemas/Schedule' }
     User:
       type: object
       properties:
@@ -777,7 +947,7 @@ components:
       type: object
       properties:
         id: { type: integer, format: int64 }
-        source: { type: string, enum: [fanza, sod, mgstage, javlibrary, fc2, avmoo, jable, libredmm] }
+        source: { type: string, enum: [fanza, sod, mgstage, javlibrary, fc2, avmoo, jable, libredmm, javdb, javbus, javbooks, javquery] }
         external_id: { type: string }
         normalized_id: { type: string }
         priority: { type: integer }

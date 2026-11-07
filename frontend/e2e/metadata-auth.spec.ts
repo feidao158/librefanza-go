@@ -1,5 +1,17 @@
 import { expect, test } from '@playwright/test'
 
+test('来源补全延期时显示待恢复的来源数量', async ({ page }) => {
+  await page.route('**/api/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/setup')) return route.fulfill({ json: { data: { installed: true } } })
+    if (path.endsWith('/metadata-job')) return route.fulfill({ json: { data: { id: 'job', status: 'completed', completed_sources: 2, failed_sources: 0, deferred_sources: 3, total_sources: 5, collection_status: 'deferred' } } })
+    if (path.endsWith('/movies/ABC-123')) return route.fulfill({ json: { data: { id: 1, normalized_id: 'ABC-123', preferred_item: { id: 1, source: 'fanza', title: 'Example', metadata: {} }, versions: [] } } })
+    return route.fulfill({ json: { data: [] } })
+  })
+  await page.goto('/movies/ABC-123')
+  await expect(page.getByText('部分来源将在恢复后继续采集：3')).toBeVisible()
+})
+
 test('连续刷新保留令牌并汇总不同来源的详情与图片', async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'persistent-token'))
   const fanza = { id: 1, source: 'fanza', title: 'Fanza title', normalized_id: 'ABC-123', cover_image_url: '', metadata: { genres: ['剧情'], sample_image_urls: ['https://example.com/a.jpg'] } }

@@ -221,7 +221,23 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 			item.CoverImageURL = attributeURL(doc, base, ".items_article_SampleImages li a", "href")
 		}
 		item.ThumbnailImageURL = attributeURL(doc, base, ".items_article_MainitemThumb img", "src")
-		item.ReleaseDate = parseDate(text(doc, "div.items_article_Releasedate"))
+		released := text(doc, "div.items_article_Releasedate")
+		if released == "" {
+			doc.Find("div.items_article_softDevice p").EachWithBreak(func(_ int, row *goquery.Selection) bool {
+				value := strings.TrimSpace(row.Text())
+				if strings.HasPrefix(value, "販売日") {
+					released = value
+					return false
+				}
+				return true
+			})
+		}
+		if _, value, found := strings.Cut(released, ":"); found {
+			released = value
+		} else if _, value, found := strings.Cut(released, "："); found {
+			released = value
+		}
+		item.ReleaseDate = parseDate(released)
 		metadata.Labels = texts(doc, ".items_article_TagArea a.tag")
 		metadata.Samples = attributeURLs(doc, base, ".items_article_SampleImages li a", "href")
 	case "jable":
@@ -239,7 +255,9 @@ func ParsePage(source, sourceURL string, body []byte) (Parsed, error) {
 		metadata.Genres = texts(doc, `.video-info a[href*="/tags/"], .video-detail a[href*="/tags/"]`)
 		metadata.Samples = attributeURLs(doc, base, ".video-screenshots a[href], .screenshots a[href]", "href")
 	default:
-		return Parsed{}, errors.New("unsupported source")
+		if !parseNewSourcePage(source, base, doc, &item, &metadata) {
+			return Parsed{}, errors.New("unsupported source")
+		}
 	}
 	if item.Title == "" || !catalog.IsProductID(item.NormalizedID) {
 		return Parsed{}, errors.New("source page has no valid product")
@@ -296,12 +314,16 @@ func attributeURL(selection finder, base *url.URL, selector, attribute string) s
 	if !exists {
 		return ""
 	}
-	reference, err := url.Parse(strings.TrimSpace(value))
-	if err != nil {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	reference, err := url.Parse(value)
+	if err != nil || reference.User != nil {
 		return ""
 	}
 	resolved := base.ResolveReference(reference)
-	if resolved.Scheme != "http" && resolved.Scheme != "https" {
+	if (resolved.Scheme != "http" && resolved.Scheme != "https") || resolved.Host == "" || resolved.User != nil {
 		return ""
 	}
 	if resolved.Scheme == "http" && strings.EqualFold(resolved.Hostname(), "pics.dmm.co.jp") {

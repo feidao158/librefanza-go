@@ -40,7 +40,7 @@ func TestAdditionalProvidersSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"libredmm", "avmoo", "javlibrary", "jable"} {
+	for _, name := range []string{"libredmm", "jable"} {
 		t.Run(name, func(t *testing.T) {
 			provider := &httpProvider{kind: name, base: base, client: server.Client()}
 			items, err := provider.Search(context.Background(), "ABC-123")
@@ -72,9 +72,33 @@ func TestNewProvidersRegistersAdditionalSources(t *testing.T) {
 	for _, entry := range providers {
 		seen[entry.(*httpProvider).kind] = true
 	}
-	for _, name := range []string{"jable", "avmoo", "javlibrary", "libredmm"} {
+	for _, name := range []string{"jable", "libredmm", "javdb", "javbooks", "javquery"} {
 		if !seen[name] {
 			t.Errorf("缺少采集源 %s", name)
+		}
+	}
+}
+
+func TestActiveSourcesExcludeRetiredProviders(t *testing.T) {
+	providers, err := NewProviders(ClientSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	for _, provider := range providers {
+		seen[provider.(*httpProvider).kind] = true
+	}
+	for _, name := range []string{"javdb", "javbooks", "javquery"} {
+		if !seen[name] {
+			t.Errorf("缺少采集源 %s", name)
+		}
+	}
+	for _, name := range []string{"avmoo", "javlibrary", "javbus"} {
+		if seen[name] {
+			t.Errorf("已退役来源仍会被采集: %s", name)
+		}
+		if err := (CrawlRequest{Source: name, Mode: "incremental"}).Validate(); err == nil {
+			t.Errorf("已退役来源仍接受新任务: %s", name)
 		}
 	}
 }
@@ -110,33 +134,12 @@ func TestJableUsesConfiguredSessionCookie(t *testing.T) {
 	t.Fatal("未注册 Jable 来源")
 }
 
-func TestJavLibrarySessionPageIsNotPersisted(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<div id="video_id"><table><tr><td class="text">ABC-123</td></tr></table></div><div id="video_title"><h3>ABC-123 Title</h3></div>session=secret`)
-	}))
-	defer server.Close()
-	providers, err := NewProviders(ClientSettings{JavLibraryURL: server.URL, JavLibraryCookie: "session=secret"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range providers {
-		if entry.(*httpProvider).kind == "javlibrary" {
-			items, err := entry.Search(context.Background(), "ABC-123")
-			if err != nil || len(items) != 1 || items[0].RawHTML != "" {
-				t.Fatal("使用会话时不应保存来源原始页面")
-			}
-			return
-		}
-	}
-	t.Fatal("未注册 JavLibrary 来源")
-}
-
 func TestLiveAdditionalSource(t *testing.T) {
 	source := os.Getenv("LIBREFANZA_LIVE_SOURCE")
 	if source == "" {
 		t.Skip("需要显式指定在线采集源")
 	}
-	ids := map[string]string{"avmoo": "ALD-312", "libredmm": "PPPE-460", "jable": "SORA-655", "javlibrary": "STARS-455"}
+	ids := map[string]string{"libredmm": "PPPE-460", "jable": "SORA-655", "javdb": "ABP-123", "javbus": "ABP-123", "javbooks": "LUCY-032", "javquery": "SDDE-772"}
 	id, ok := ids[source]
 	if !ok {
 		t.Fatal("无效的在线采集源")

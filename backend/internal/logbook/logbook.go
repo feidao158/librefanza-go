@@ -81,6 +81,7 @@ var reasonMessages = map[string]string{
 	"network": "网络请求失败", "cancelled": "任务已取消或服务正在停止", "verification": "来源要求验证",
 	"configuration": "来源配置缺失或无效", "fanza_credentials": "未配置 Fanza API 凭据", "mgstage_series": "MGStage 系列列表地址未配置或无效",
 	"proxy_configuration": "代理地址无效", "source_session": "来源会话无效", "invalid_response": "来源响应无法解析", "storage": "数据库操作失败", "panic": "任务执行期间发生异常",
+	"source_retired": "来源已停用", "source_deferred": "来源暂时冷却",
 }
 
 func (r *Recorder) Clean(ctx context.Context, before time.Time) error {
@@ -153,6 +154,10 @@ func ApplyFailure(entry *Entry, err error) {
 		entry.Reason = "timeout"
 	case err != nil && strings.Contains(err.Error(), "source requires verification"):
 		entry.Reason = "verification"
+	case errors.Is(err, sources.ErrSourceRetired):
+		entry.Reason = "source_retired"
+	case err != nil && strings.Contains(err.Error(), "source temporarily deferred"):
+		entry.Reason = "source_deferred"
 	case err != nil && strings.Contains(err.Error(), "Fanza credentials are not configured"):
 		entry.Reason = "fanza_credentials"
 	case err != nil && (strings.Contains(err.Error(), "MGStage series URL is not configured") || strings.Contains(err.Error(), "invalid MGStage series URL")):
@@ -173,9 +178,9 @@ func ApplyFailure(entry *Entry, err error) {
 func sanitize(entry *Entry) {
 	entry.Level = allowed(entry.Level, "info", "warn", "error")
 	entry.Event = allowed(entry.Event, "task_started", "task_completed", "task_failed", "source_failed", "worker_stopped", "worker_started", "worker_start_failed", "log_cleanup_failed")
-	entry.Source = allowed(entry.Source, "fanza", "sod", "mgstage", "fc2", "jable", "avmoo", "javlibrary", "libredmm")
-	entry.TaskType = allowed(entry.TaskType, "movie_search", "source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl", "rebuild_movies", "maintenance_tick", "metadata_enrich", "metadata_backfill", "metadata_backfill_tick")
-	entry.Reason = allowed(entry.Reason, "unknown", "http", "dns", "timeout", "connection_refused", "connection_reset", "tls", "network", "cancelled", "verification", "configuration", "fanza_credentials", "mgstage_series", "proxy_configuration", "source_session", "invalid_response", "storage", "panic")
+	entry.Source = allowed(entry.Source, "fanza", "sod", "mgstage", "fc2", "jable", "avmoo", "javlibrary", "libredmm", "javdb", "javbus", "javbooks", "javquery")
+	entry.TaskType = allowed(entry.TaskType, "movie_search", "source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl", "rebuild_movies", "maintenance_tick", "metadata_enrich", "metadata_backfill", "metadata_backfill_tick", "metadata_source_retry", "source_history_backfill", "source_probe")
+	entry.Reason = allowed(entry.Reason, "unknown", "http", "dns", "timeout", "connection_refused", "connection_reset", "tls", "network", "cancelled", "verification", "configuration", "fanza_credentials", "mgstage_series", "proxy_configuration", "source_session", "invalid_response", "storage", "panic", "source_retired", "source_deferred")
 	entry.Stage = allowed(entry.Stage, "fetch", "save", "progress")
 	entry.PositionType = allowed(entry.PositionType, "page", "number")
 	if len(entry.TaskID) != 36 || strings.Trim(entry.TaskID, "0123456789abcdefABCDEF-") != "" {

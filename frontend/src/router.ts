@@ -7,6 +7,8 @@ import AuthView from './views/AuthView.vue'
 import SetupView from './views/SetupView.vue'
 import AdminView from './views/AdminView.vue'
 import PasswordView from './views/PasswordView.vue'
+import AnnotationsView from './views/AnnotationsView.vue'
+import RecommendationsView from './views/RecommendationsView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -18,6 +20,8 @@ export const router = createRouter({
     { path: '/actresses', component: ActressesView },
     { path: '/actresses/name/:name', name: 'actress-by-name', component: ActressView },
     { path: '/actresses/:id', component: ActressView },
+    { path: '/annotations', component: AnnotationsView },
+    { path: '/recommendations', component: RecommendationsView },
     { path: '/login', component: AuthView },
     { path: '/register', component: AuthView },
     { path: '/forgot-password', component: PasswordView },

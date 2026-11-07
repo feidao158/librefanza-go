@@ -45,15 +45,18 @@ type cooldown struct {
 func (cooldown) TableName() string { return "search_cooldowns" }
 
 type Manager struct {
-	db              *gorm.DB
-	storage         *jobs.GormStorage
-	queue           *jobs.Queue
-	worker          *jobs.Worker
-	logs            *logbook.Recorder
-	enrichmentReady bool
-	mu              sync.Mutex
-	cancel          context.CancelFunc
-	done            chan struct{}
+	db                  *gorm.DB
+	storage             *jobs.GormStorage
+	queue               *jobs.Queue
+	worker              *jobs.Worker
+	logs                *logbook.Recorder
+	enrichmentReady     bool
+	sourceBackfillReady bool
+	sourceProbesReady   bool
+	sourceProbeLoad     func(context.Context) (ScheduleSettings, error)
+	mu                  sync.Mutex
+	cancel              context.CancelFunc
+	done                chan struct{}
 }
 
 func NewManager(db *gorm.DB, search SearchFunc) (*Manager, error) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, UserRound } from 'lucide-vue-next'
+import { ArrowUpDown, Search, UserRound, Users } from 'lucide-vue-next'
 import { api } from '../api/client'
 import Pagination from '../components/Pagination.vue'
 import type { Actress } from '../types'
@@ -37,13 +37,60 @@ watch(() => route.fullPath, load, { immediate: true })
 
 <template>
   <div class="content-wrap">
-    <div class="page-title-row"><div><div class="section-kicker">LIBREFANZA / PEOPLE</div><h1>{{ $t('actresses.title') }}</h1><p>{{ $t('actresses.subtitle') }}</p></div><span class="count-label">{{ total.toLocaleString() }} <span>PEOPLE</span></span></div>
-    <form class="filter-bar" @submit.prevent="submit"><label class="search-control"><Search :size="19" /><input v-model="query" class="input" :placeholder="$t('actresses.search')"></label><select v-model="order" class="select order-select" :aria-label="$t('movies.order')"><option value="new">{{ $t('actresses.newest') }}</option><option value="name">{{ $t('actresses.name') }}</option></select><button class="btn search-button" type="submit"><Search :size="17" />{{ $t('common.search') }}</button></form>
-    <div class="section-heading"><div><span class="section-number">02</span><h2>{{ $t('actresses.title') }}</h2></div><span class="result-count">{{ $t('common.total', { count: total }) }}</span></div>
-    <div v-if="loading" class="center-state"><span class="loading loading-spinner"></span></div>
-    <div v-else-if="error" class="center-state">{{ $t('common.error') }}</div>
-    <div v-else-if="actresses.length" class="actress-grid"><RouterLink v-for="actress in actresses" :key="actress.id" class="actress-card" :to="`/actresses/${actress.id}`"><div class="actress-photo"><img v-if="actress.image_url && !broken[actress.id]" :src="actress.image_url" :alt="actress.name" loading="lazy" referrerpolicy="no-referrer" @error="broken[actress.id] = true"><UserRound v-else :size="32" /></div><strong>{{ actress.name }}</strong><span v-if="actress.fanza_id">#{{ actress.fanza_id }}</span></RouterLink></div>
-    <div v-else class="center-state">{{ $t('common.noResults') }}</div>
+    <div class="page-title-row">
+      <div>
+        <div class="section-kicker"><Users :size="12" /> LIBREFANZA / PEOPLE</div>
+        <h1>{{ $t('actresses.title') }}</h1>
+        <p>{{ $t('actresses.subtitle') }}</p>
+      </div>
+      <span class="count-label">{{ total.toLocaleString() }} <span>PEOPLE</span></span>
+    </div>
+    <form class="filter-bar" @submit.prevent="submit">
+      <label class="search-control">
+        <Search :size="18" />
+        <input v-model="query" class="input" :placeholder="$t('actresses.search')">
+      </label>
+      <label class="filter-select">
+        <ArrowUpDown :size="15" />
+        <select v-model="order" class="select order-select" :aria-label="$t('movies.order')">
+          <option value="new">{{ $t('actresses.newest') }}</option>
+          <option value="name">{{ $t('actresses.name') }}</option>
+        </select>
+      </label>
+      <button class="btn search-button" type="submit">
+        <Search :size="16" />
+        {{ $t('common.search') }}
+      </button>
+    </form>
+    <div class="section-heading">
+      <div>
+        <span class="section-number">02</span>
+        <h2>{{ $t('actresses.title') }}</h2>
+      </div>
+      <span class="result-count">{{ $t('common.total', { count: total }) }}</span>
+    </div>
+    <div v-if="loading" class="center-state">
+      <span class="loading loading-spinner loading-md text-emerald-600"></span>
+      <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
+    </div>
+    <div v-else-if="error" class="center-state">
+      <p class="error-text font-medium">{{ $t('common.error') }}</p>
+      <button class="btn btn-outline btn-sm" @click="load">{{ $t('common.retry') }}</button>
+    </div>
+    <div v-else-if="actresses.length" class="actress-grid">
+      <RouterLink v-for="actress in actresses" :key="actress.id" class="actress-card" :to="`/actresses/${actress.id}`">
+        <div class="actress-photo">
+          <img v-if="actress.image_url && !broken[actress.id]" :src="actress.image_url" :alt="actress.name" loading="lazy" referrerpolicy="no-referrer" @error="broken[actress.id] = true">
+          <UserRound v-else :size="32" />
+        </div>
+        <strong>{{ actress.name }}</strong>
+        <span v-if="actress.fanza_id">#{{ actress.fanza_id }}</span>
+      </RouterLink>
+    </div>
+    <div v-else class="center-state">
+      <UserRound :size="32" class="text-slate-300" />
+      <p class="font-medium text-slate-600">{{ $t('common.noResults') }}</p>
+    </div>
     <Pagination :page="page" :size="45" :total="total" @change="changePage" />
   </div>
 </template>

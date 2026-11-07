@@ -309,5 +309,5 @@ func FetchJablePage(ctx context.Context, settings ClientSettings, id string) ([]
 
 func isSourceChallenge(body []byte) bool {
 	lower := bytes.ToLower(body)
-	return bytes.Contains(lower, []byte("challenge-form")) || bytes.Contains(lower, []byte("access denied")) || bytes.Contains(lower, []byte("just a moment"))
+	return bytes.Contains(lower, []byte("challenge-form")) || bytes.Contains(lower, []byte("access denied")) || bytes.Contains(lower, []byte("just a moment")) || bytes.Contains(lower, []byte("driver-verify")) || bytes.Contains(lower, []byte("age verification javbus"))
 }

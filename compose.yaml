@@ -1,8 +1,11 @@
 services:
   app:
+    init: true
     build:
       context: .
       dockerfile: Dockerfile
+    security_opt:
+      - seccomp:./docker/chromium-seccomp.json
     ports:
       - "8080:8080"
     environment:
@@ -13,6 +16,8 @@ services:
       FC2_BASE_URL: ${FC2_BASE_URL:-}
       MGSTAGE_SERIES_URL: ${MGSTAGE_SERIES_URL:-}
       BLACKHOLE_PATTERN: ${BLACKHOLE_PATTERN:-}
+      GORSE_ENTRY_POINT: ${GORSE_ENTRY_POINT:-}
+      GORSE_API_KEY: ${GORSE_API_KEY:-}
     volumes:
       - app-data:/data
     restart: unless-stopped

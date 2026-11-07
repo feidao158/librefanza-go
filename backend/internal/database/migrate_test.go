@@ -53,7 +53,7 @@ func TestMigrationsAgainstDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"users", "api_sessions", "movies", "actresses", "source_items", "source_pages", "movie_cast", "settings", "search_cooldowns", "source_crawl_progress", "application_logs"} {
+	for _, name := range []string{"users", "api_sessions", "movies", "actresses", "source_items", "source_pages", "movie_cast", "settings", "search_cooldowns", "source_crawl_progress", "application_logs", "user_feedbacks", "user_recommendation_profiles"} {
 		if !db.Migrator().HasTable(name) {
 			t.Fatalf("missing table %s", name)
 		}

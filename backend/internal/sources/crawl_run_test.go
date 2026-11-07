@@ -18,6 +18,44 @@ type crawlStub struct {
 	pages    []int
 }
 
+func TestJavBusRetiredFromCollection(t *testing.T) {
+	providers, err := NewProviders(ClientSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range providers {
+		if provider.(*httpProvider).kind == "javbus" {
+			t.Fatal("已停用来源不应参与检索")
+		}
+	}
+	if err := (CrawlRequest{Source: "javbus", Mode: "incremental"}).Validate(); !errors.Is(err, ErrSourceRetired) {
+		t.Fatalf("已停用来源应拒绝采集: %v", err)
+	}
+}
+
+type skippedPageSource struct{ pages []int }
+
+func (s *skippedPageSource) Page(context.Context, int) ([]Parsed, error) {
+	return nil, errors.New("不应调用旧分页接口")
+}
+func (s *skippedPageSource) Search(context.Context, string) ([]Parsed, error) { return nil, nil }
+func (s *skippedPageSource) PageWithStats(_ context.Context, page int) ([]Parsed, int, error) {
+	s.pages = append(s.pages, page)
+	if page == 1 {
+		return nil, 1, nil
+	}
+	return []Parsed{{Item: catalog.SourceItem{NormalizedID: "ABC-123"}}}, 0, nil
+}
+
+func TestCrawlContinuesWhenPageOnlyContainsDeletedProducts(t *testing.T) {
+	source := &skippedPageSource{}
+	var progress CrawlProgress
+	err := RunCrawl(context.Background(), CrawlRequest{Source: "javdb", Mode: "pages", StartPage: 1, EndPage: 2}, source, &stubSink{}, progress, func(value CrawlProgress) error { progress = value; return nil })
+	if err != nil || len(source.pages) != 2 || progress.Skipped != 1 || progress.Processed != 1 || progress.NextPage != 3 {
+		t.Fatalf("无效详情导致采集中断: 进度=%+v 页码=%v 错误=%v", progress, source.pages, err)
+	}
+}
+
 func TestAVMOOPageLoadsIndividualDetails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -55,7 +93,7 @@ func (s *crawlStub) Search(_ context.Context, id string) ([]Parsed, error) {
 }
 
 func TestCrawlResumeAndPageRange(t *testing.T) {
-	request := CrawlRequest{Source: "avmoo", Mode: "pages", StartPage: 1, EndPage: 3}
+	request := CrawlRequest{Source: "libredmm", Mode: "pages", StartPage: 1, EndPage: 3}
 	progress := CrawlProgress{}
 	source := &crawlStub{failPage: 3}
 	sink := &stubSink{}
@@ -78,13 +116,13 @@ func TestCrawlDateAndIDRanges(t *testing.T) {
 	sink := &stubSink{}
 	var progress CrawlProgress
 	save := func(value CrawlProgress) error { progress = value; return nil }
-	date := CrawlRequest{Source: "avmoo", Mode: "dates", StartDate: "2025-01-02", EndDate: "2025-01-03"}
+	date := CrawlRequest{Source: "libredmm", Mode: "dates", StartDate: "2025-01-02", EndDate: "2025-01-03"}
 	if err := RunCrawl(context.Background(), date, source, sink, progress, save); err != nil || len(sink.saved) != 2 {
 		t.Fatalf("日期采集数量 = %d，错误 = %v", len(sink.saved), err)
 	}
 	sink.saved = nil
 	progress = CrawlProgress{}
-	ids := CrawlRequest{Source: "avmoo", Mode: "ids", Prefix: "ABC", StartNumber: 1, EndNumber: 2, NumberWidth: 3}
+	ids := CrawlRequest{Source: "libredmm", Mode: "ids", Prefix: "ABC", StartNumber: 1, EndNumber: 2, NumberWidth: 3}
 	if err := RunCrawl(context.Background(), ids, source, sink, progress, save); err != nil || len(sink.saved) != 2 || sink.saved[1].Item.NormalizedID != "ABC-002" {
 		t.Fatalf("番号采集结果 = %+v，错误 = %v", sink.saved, err)
 	}

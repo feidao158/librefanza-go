@@ -4,15 +4,16 @@ import { CalendarClock, FileText, Play, RefreshCw, Save, X } from 'lucide-vue-ne
 import { api, ApiError, jsonBody } from '../api/client'
 import { decodeSchedule, encodeSchedule, type ScheduleEditor } from './crawlSchedule'
 
-type Source = 'actress' | 'fanza' | 'mgstage' | 'jable' | 'avmoo' | 'javlibrary' | 'libredmm'
-interface Schedule { enabled: boolean; cron: string }
-interface Settings { timezone: string; actress: Schedule; fanza: Schedule; mgstage: Schedule; jable: Schedule; avmoo: Schedule; javlibrary: Schedule; libredmm: Schedule }
-interface Job { id: string; type: string; status: string; created_at: string; error_code?: string; crawl?: { source: string; mode: string }; progress?: { next_page: number; next_number: number; processed: number; undated: number } }
+type Source = 'actress' | 'fanza' | 'mgstage' | 'jable' | 'libredmm' | 'javdb' | 'javbus' | 'javbooks' | 'javquery'
+interface Schedule { enabled: boolean; cron: string; auto?: boolean }
+interface Settings { timezone: string; actress: Schedule; fanza: Schedule; mgstage: Schedule; jable: Schedule; libredmm: Schedule; javdb: Schedule; javbus: Schedule; javbooks: Schedule; javquery: Schedule }
+interface Job { id: string; type: string; status: string; created_at: string; error_code?: string; crawl?: { source: string; mode: string }; progress?: { next_page: number; next_number: number; processed: number; undated: number; skipped: number } }
 
 const entries: { key: Source; label: string; modern: boolean }[] = [
   { key: 'actress', label: 'admin.actresses', modern: false }, { key: 'fanza', label: 'admin.fanza', modern: false },
   { key: 'mgstage', label: 'admin.mgstage', modern: false }, { key: 'jable', label: 'Jable', modern: true },
-  { key: 'avmoo', label: 'AVMOO', modern: true }, { key: 'javlibrary', label: 'JavLibrary', modern: true }, { key: 'libredmm', label: 'LibreFanza', modern: true },
+  { key: 'libredmm', label: 'LibreFanza', modern: true }, { key: 'javdb', label: 'JavDB', modern: true },
+  { key: 'javbooks', label: 'JavBooks', modern: true }, { key: 'javquery', label: 'JavQuery', modern: true },
 ]
 const settings = ref<Settings | null>(null)
 const editors = reactive<Partial<Record<Source, ScheduleEditor>>>({})
@@ -49,6 +50,9 @@ function formatRun(value: string): string {
   catch { return value.slice(0, 16).replace('T', ' ') }
 }
 function label(value: string): string { return value.startsWith('admin.') ? value : value }
+function markManual(source: Source) {
+  if (settings.value && ['javdb', 'javbus', 'javbooks', 'javquery'].includes(source)) settings.value[source].auto = false
+}
 async function save() {
   if (!settings.value) return
   busy.value = true; error.value = ''; success.value = false
@@ -96,7 +100,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       <div v-if="backfill" class="crawl-progress"><strong>{{ $t('metadata.backfill') }}</strong> · {{ $t(backfill.progress.completed ? 'metadata.done' : backfill.progress.phase === 'raw' ? 'metadata.raw' : 'metadata.movies') }} · {{ $t('metadata.processed') }} {{ backfill.progress.processed }} · {{ $t('metadata.failedJobs') }} {{ backfill.failed_jobs + backfill.progress.failed }} <RouterLink v-if="backfill.failed_jobs" :to="{ path: '/admin/tasks', query: { kind: 'metadata', status: 'failed' } }">{{ $t('common.retry') }}</RouterLink></div>
       <div class="crawl-list">
         <article v-for="entry in entries" :key="entry.key" class="crawl-row">
-          <div class="crawl-row-heading"><div><h3>{{ entry.label.startsWith('admin.') ? $t(label(entry.label)) : entry.label }}</h3><div class="crawl-meta"><span :class="settings[entry.key].enabled ? 'crawl-on' : 'crawl-off'">{{ $t(settings[entry.key].enabled ? 'common.enabled' : 'crawl.disabled') }}</span><template v-if="latest(entry.key)"><span>{{ $t(`jobs.statuses.${latest(entry.key)?.status}`) }}</span><time>{{ formatRun(latest(entry.key)!.created_at) }}</time><RouterLink :to="{ path: '/admin/logs', query: { task_id: latest(entry.key)!.id } }" :title="$t('logActions.viewJob')" :aria-label="$t('logActions.viewJob')"><FileText :size="15" /></RouterLink></template><span v-else>{{ $t('crawl.never') }}</span></div></div><div class="crawl-actions"><label class="crawl-toggle"><span class="sr-only">{{ $t('common.enabled') }}</span><input v-model="settings[entry.key].enabled" class="toggle toggle-success toggle-sm" type="checkbox"></label><button class="btn btn-outline btn-sm" type="button" :disabled="busy" @click="run(entry.key, entry.modern)"><Play :size="14" />{{ $t('admin.run') }}</button></div></div>
+          <div class="crawl-row-heading"><div><h3>{{ entry.label.startsWith('admin.') ? $t(label(entry.label)) : entry.label }}</h3><div class="crawl-meta"><span :class="settings[entry.key].enabled ? 'crawl-on' : 'crawl-off'">{{ $t(settings[entry.key].enabled ? 'common.enabled' : 'crawl.disabled') }}</span><template v-if="latest(entry.key)"><span>{{ $t(`jobs.statuses.${latest(entry.key)?.status}`) }}</span><time>{{ formatRun(latest(entry.key)!.created_at) }}</time><RouterLink :to="{ path: '/admin/logs', query: { task_id: latest(entry.key)!.id } }" :title="$t('logActions.viewJob')" :aria-label="$t('logActions.viewJob')"><FileText :size="15" /></RouterLink></template><span v-else>{{ $t('crawl.never') }}</span></div></div><div class="crawl-actions"><label class="crawl-toggle"><span class="sr-only">{{ $t('common.enabled') }}</span><input v-model="settings[entry.key].enabled" class="toggle toggle-success toggle-sm" type="checkbox" @change="markManual(entry.key)"></label><button class="btn btn-outline btn-sm" type="button" :disabled="busy" @click="run(entry.key, entry.modern)"><Play :size="14" />{{ $t('admin.run') }}</button></div></div>
           <div v-if="editors[entry.key]" class="crawl-controls">
             <CalendarClock :size="16" />
             <select v-model="editors[entry.key]!.mode" class="select select-sm" :aria-label="$t('crawl.frequency')">
@@ -107,8 +111,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             <input v-else v-model="settings[entry.key].cron" class="input input-sm crawl-cron" :aria-label="$t('admin.expression')">
           </div>
           <div v-if="nextRuns[entry.key]" class="crawl-progress">{{ $t('schedulePreview.next') }} {{ nextRuns[entry.key]?.slice(0, 16).replace('T', ' ') }} <span>{{ $t('schedulePreview.saved') }}</span></div>
-          <div v-if="latest(entry.key)?.progress" class="crawl-progress">{{ $t('crawl.processed') }} {{ latest(entry.key)?.progress?.processed }} <span v-if="latest(entry.key)?.progress?.next_page">· {{ $t('crawl.nextPage') }} {{ latest(entry.key)?.progress?.next_page }}</span><span v-if="latest(entry.key)?.progress?.undated"> · {{ $t('crawl.undated') }} {{ latest(entry.key)?.progress?.undated }}</span></div>
-          <div v-if="latest(entry.key)?.error_code" class="crawl-error">{{ $t(`crawl.errors.${latest(entry.key)?.error_code}`) }} <button v-if="latest(entry.key)?.status === 'failed'" class="btn btn-ghost btn-xs" @click="retry(latest(entry.key)!)">{{ $t('common.retry') }}</button></div>
+          <div v-if="latest(entry.key)?.progress" class="crawl-progress">{{ $t('crawl.processed') }} {{ latest(entry.key)?.progress?.processed }} <span v-if="latest(entry.key)?.progress?.next_page">· {{ $t('crawl.nextPage') }} {{ latest(entry.key)?.progress?.next_page }}</span><span v-if="latest(entry.key)?.progress?.undated"> · {{ $t('crawl.undated') }} {{ latest(entry.key)?.progress?.undated }}</span><span v-if="latest(entry.key)?.progress?.skipped"> · {{ $t('sourceHealth.skipped') }} {{ latest(entry.key)?.progress?.skipped }}</span></div>
+          <div v-if="latest(entry.key)?.error_code" class="crawl-error">{{ latest(entry.key)?.error_code === 'source_retired' ? $t('sourceHealth.source_retired') : $t(`crawl.errors.${latest(entry.key)?.error_code}`) }} <button v-if="latest(entry.key)?.status === 'failed' && latest(entry.key)?.error_code !== 'source_retired'" class="btn btn-ghost btn-xs" @click="retry(latest(entry.key)!)">{{ $t('common.retry') }}</button></div>
         </article>
       </div>
     </template>

@@ -89,6 +89,7 @@ func NewRouter(service *setup.Service, providers ...*database.Provider) *gin.Eng
 		registerPlaybackRoutes(api, providers[0])
 		registerSettingsRoutes(api, providers[0])
 		registerAdminRoutes(api, providers[0])
+		registerRecommendationRoutes(api, providers[0])
 	}
 	return router
 }

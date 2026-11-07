@@ -29,6 +29,7 @@ type CrawlProgress struct {
 	NextNumber int `json:"next_number"`
 	Processed  int `json:"processed"`
 	Undated    int `json:"undated"`
+	Skipped    int `json:"skipped"`
 }
 
 type CrawlSource interface {
@@ -36,9 +37,13 @@ type CrawlSource interface {
 	Search(context.Context, string) ([]Parsed, error)
 }
 
+var ErrSourceRetired = errors.New("source retired")
+
 func (r CrawlRequest) Validate() error {
 	switch r.Source {
-	case "jable", "avmoo", "javlibrary", "libredmm":
+	case "avmoo", "javlibrary", "javbus":
+		return ErrSourceRetired
+	case "jable", "libredmm", "javdb", "javbooks", "javquery":
 	default:
 		return errors.New("invalid crawl source")
 	}
@@ -106,12 +111,24 @@ func RunCrawl(ctx context.Context, request CrawlRequest, source CrawlSource, sin
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		items, err := source.Page(ctx, page)
+		var items []Parsed
+		var skipped int
+		var err error
+		if detailed, ok := source.(interface {
+			PageWithStats(context.Context, int) ([]Parsed, int, error)
+		}); ok {
+			items, skipped, err = detailed.PageWithStats(ctx, page)
+		} else {
+			items, err = source.Page(ctx, page)
+		}
 		if err != nil {
 			return &CrawlError{PositionType: "page", Position: page, Stage: "fetch", Err: err}
 		}
-		if len(items) == 0 {
+		if len(items) == 0 && skipped == 0 {
 			return nil
+		}
+		if page >= progress.NextPage {
+			progress.Skipped += skipped
 		}
 		for _, item := range items {
 			if request.Mode == "dates" {
