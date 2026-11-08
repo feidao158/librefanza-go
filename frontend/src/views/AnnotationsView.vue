@@ -266,20 +266,22 @@ onBeforeUnmount(() => {
         class="card bg-base-100 shadow-lg border border-base-300 overflow-hidden relative"
       >
         <div class="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 p-4 sm:p-6">
-          <!-- 封面大图（可点击弹窗查看高清大图，使用平滑渐变加载） -->
-          <div class="md:col-span-5 flex flex-col items-center">
+          <!-- 封面大图（支持完整原比例展示，使用平滑渐变加载与氛围背景，避免裁剪画面） -->
+          <div class="md:col-span-5 flex flex-col items-center justify-center">
             <div
-              class="w-full relative aspect-[2/3] max-w-[200px] sm:max-w-[260px] md:max-w-[340px] bg-base-200 rounded-lg overflow-hidden shadow-inner flex items-center justify-center cursor-pointer group"
+              class="w-full relative min-h-[260px] sm:min-h-[320px] md:min-h-[440px] max-h-[500px] bg-base-200/60 rounded-xl overflow-hidden shadow-inner flex items-center justify-center cursor-pointer group border border-base-300/40"
               :title="t('common.previewDetails')"
               @click="openCoverLightbox"
             >
               <SmoothImage
                 :src="movie.preferred_item?.cover_image_url || movie.cover_image_url"
                 :alt="movie.preferred_item?.title || movie.normalized_id"
-                aspect="w-full h-full"
+                aspect="w-full h-full min-h-[260px] sm:min-h-[320px] md:min-h-[440px] max-h-[500px]"
+                object-fit="contain"
+                blur-backdrop
                 :fallback-text="t('movies.noCover')"
                 loading="eager"
-                img-class="group-hover:scale-105 transition-transform duration-300"
+                img-class="group-hover:scale-[1.02] transition-transform duration-300 drop-shadow-sm max-h-[490px]"
               >
                 <!-- 番号角标 -->
                 <div class="absolute top-2.5 left-2.5 z-10">
@@ -289,7 +291,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <!-- 点击看大图提示浮层 -->
-                <div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10">
+                <div class="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10">
                   <span class="badge badge-neutral bg-black/70 text-white gap-1 py-1.5 px-2.5 text-xs shadow">
                     <ZoomIn :size="14" /> 点击查看大图
                   </span>

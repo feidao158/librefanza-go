@@ -24,10 +24,23 @@ var (
 type Redis = config.Redis
 
 type Request struct {
-	Database config.Database `json:"database"`
-	Redis    Redis           `json:"redis"`
-	Email    string          `json:"email"`
-	Password string          `json:"password"`
+	Database        config.Database `json:"database"`
+	ManagedDatabase bool            `json:"managed_database"`
+	Redis           Redis           `json:"redis"`
+	Email           string          `json:"email"`
+	Password        string          `json:"password"`
+}
+
+// ManagedDatabase 返回服务端配置的内置数据库连接信息。
+func ManagedDatabase() (config.Database, bool) {
+	host := strings.TrimSpace(os.Getenv("LIBREFANZA_MANAGED_DB_HOST"))
+	name := strings.TrimSpace(os.Getenv("LIBREFANZA_MANAGED_DB_NAME"))
+	user := strings.TrimSpace(os.Getenv("LIBREFANZA_MANAGED_DB_USER"))
+	password := os.Getenv("LIBREFANZA_MANAGED_DB_PASSWORD")
+	if host == "" || name == "" || user == "" || password == "" {
+		return config.Database{}, false
+	}
+	return config.Database{Driver: "postgres", Host: host, Port: 5432, Name: name, User: user, Password: password}, true
 }
 
 type Backend interface {
@@ -100,6 +113,13 @@ func (s *Service) Initialize(ctx context.Context, request Request) error {
 	defer s.mu.Unlock()
 	if s.lockErr != nil {
 		return s.lockErr
+	}
+	if request.ManagedDatabase {
+		var ok bool
+		request.Database, ok = ManagedDatabase()
+		if !ok {
+			return ErrInvalidInput
+		}
 	}
 
 	request.Email = strings.ToLower(strings.TrimSpace(request.Email))

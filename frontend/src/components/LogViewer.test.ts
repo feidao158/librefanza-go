@@ -31,6 +31,18 @@ describe('运行日志', () => {
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('操作未完成')
   })
+  it('展示并筛选推荐日志指标', async () => {
+    request.mockResolvedValue({ data: [{ id: 2, created_at: '2026-11-06T06:00:00Z', level: 'info', event: 'recommendation_served', source: 'recommendation', details_json: '{"algorithm":"local","candidates":100,"returned":24,"duration_ms":32}' }], meta: { total: 1 } })
+    const wrapper = mount(LogViewer, { global: { plugins: [i18n] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('推荐结果已生成')
+    expect(wrapper.text()).toContain('候选数：100')
+    expect(wrapper.text()).toContain('返回数：24')
+    await wrapper.get('[name="source"]').setValue('recommendation')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+    expect(request).toHaveBeenLastCalledWith('/admin/logs?page=1&source=recommendation')
+  })
   it('从任务跳转时按任务编号查询日志', async () => {
     mount(LogViewer, { props: { taskId: '7281166a-f25c-4dbb-8c06-179d4da365c0' }, global: { plugins: [i18n] } })
     await flushPromises()

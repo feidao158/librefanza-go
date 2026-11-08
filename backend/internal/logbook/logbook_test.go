@@ -41,6 +41,14 @@ func TestRecorderOutputsSafeFailureWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestRecommendationLogSanitizesDetails(t *testing.T) {
+	var output bytes.Buffer
+	New(nil, &output).Record(context.Background(), Entry{Level: "info", Event: "recommendation_served", Source: "recommendation", DetailsJSON: `{"algorithm":"local","returned":12,"duration_ms":8,"secret":"private-secret-token"}`})
+	if strings.Contains(output.String(), "private-secret-token") || !strings.Contains(output.String(), `\"returned\":12`) || !strings.Contains(output.String(), `"source":"recommendation"`) {
+		t.Fatalf("推荐日志详情不正确或包含敏感信息：%s", output.String())
+	}
+}
+
 func TestKnownConfigurationErrorsProvideSpecificSafeReason(t *testing.T) {
 	for _, test := range []struct{ message, reason string }{
 		{"Fanza credentials are not configured", "fanza_credentials"},

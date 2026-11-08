@@ -27,8 +27,30 @@ type Entry struct {
 	Stage        string    `json:"stage"`
 	PositionType string    `json:"position_type"`
 	Position     int       `json:"position"`
+	DetailsJSON  string    `json:"details_json,omitempty" gorm:"column:details_json"`
 	Message      string    `json:"message,omitempty" gorm:"-"`
 	ReasonText   string    `json:"reason_text,omitempty" gorm:"-"`
+}
+
+// RecommendationDetails 仅保存可用于汇总调优的非身份信息。
+type RecommendationDetails struct {
+	Algorithm  string `json:"algorithm,omitempty"`
+	Gorse      string `json:"gorse,omitempty"`
+	Origin     string `json:"origin,omitempty"`
+	Action     string `json:"action,omitempty"`
+	Page       int    `json:"page,omitempty"`
+	PageSize   int    `json:"page_size,omitempty"`
+	Candidates int    `json:"candidates,omitempty"`
+	Returned   int    `json:"returned,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Liked      int    `json:"liked,omitempty"`
+	Disliked   int    `json:"disliked,omitempty"`
+	Uncertain  int    `json:"uncertain,omitempty"`
+}
+
+func RecommendationEntry(event, level string, details RecommendationDetails) Entry {
+	data, _ := json.Marshal(details)
+	return Entry{Level: level, Event: event, Source: "recommendation", DetailsJSON: string(data)}
 }
 
 func (Entry) TableName() string { return "application_logs" }
@@ -73,6 +95,8 @@ var eventMessages = map[string]string{
 	"task_started": "任务开始执行", "task_completed": "任务执行完成", "task_failed": "任务执行失败",
 	"source_failed": "来源检索失败", "worker_stopped": "后台任务处理器意外停止", "worker_started": "后台任务处理器已恢复",
 	"worker_start_failed": "后台任务处理器启动失败", "log_cleanup_failed": "日志清理失败",
+	"recommendation_served": "推荐结果已生成", "recommendation_failed": "推荐结果生成失败", "recommendation_feedback": "推荐反馈已保存",
+	"recommendation_sync_failed": "推荐数据同步失败，稍后重试", "recommendation_sync_resumed": "推荐数据同步已恢复",
 }
 
 var reasonMessages = map[string]string{
@@ -177,8 +201,8 @@ func ApplyFailure(entry *Entry, err error) {
 
 func sanitize(entry *Entry) {
 	entry.Level = allowed(entry.Level, "info", "warn", "error")
-	entry.Event = allowed(entry.Event, "task_started", "task_completed", "task_failed", "source_failed", "worker_stopped", "worker_started", "worker_start_failed", "log_cleanup_failed")
-	entry.Source = allowed(entry.Source, "fanza", "sod", "mgstage", "fc2", "jable", "avmoo", "javlibrary", "libredmm", "javdb", "javbus", "javbooks", "javquery")
+	entry.Event = allowed(entry.Event, "task_started", "task_completed", "task_failed", "source_failed", "worker_stopped", "worker_started", "worker_start_failed", "log_cleanup_failed", "recommendation_served", "recommendation_failed", "recommendation_feedback", "recommendation_sync_failed", "recommendation_sync_resumed")
+	entry.Source = allowed(entry.Source, "fanza", "sod", "mgstage", "fc2", "jable", "avmoo", "javlibrary", "libredmm", "javdb", "javbus", "javbooks", "javquery", "recommendation")
 	entry.TaskType = allowed(entry.TaskType, "movie_search", "source_crawl", "actress_crawl", "fanza_crawl", "mgstage_crawl", "rebuild_movies", "maintenance_tick", "metadata_enrich", "metadata_backfill", "metadata_backfill_tick", "metadata_source_retry", "source_history_backfill", "source_probe")
 	entry.Reason = allowed(entry.Reason, "unknown", "http", "dns", "timeout", "connection_refused", "connection_reset", "tls", "network", "cancelled", "verification", "configuration", "fanza_credentials", "mgstage_series", "proxy_configuration", "source_session", "invalid_response", "storage", "panic", "source_retired", "source_deferred")
 	entry.Stage = allowed(entry.Stage, "fetch", "save", "progress")
@@ -194,6 +218,29 @@ func sanitize(entry *Entry) {
 	}
 	if entry.Position < 0 {
 		entry.Position = 0
+	}
+	if entry.Source != "recommendation" || len(entry.DetailsJSON) > 2048 {
+		entry.DetailsJSON = ""
+	} else if entry.DetailsJSON != "" {
+		var details RecommendationDetails
+		if json.Unmarshal([]byte(entry.DetailsJSON), &details) != nil {
+			entry.DetailsJSON = ""
+		} else {
+			details.Algorithm = allowed(details.Algorithm, "gorse", "local", "not_ready")
+			details.Gorse = allowed(details.Gorse, "disabled", "used", "empty", "error", "syncing")
+			details.Origin = allowed(details.Origin, "annotation", "recommendation")
+			details.Action = allowed(details.Action, "like", "dislike", "uncertain")
+			details.Page = max(details.Page, 0)
+			details.PageSize = max(details.PageSize, 0)
+			details.Candidates = max(details.Candidates, 0)
+			details.Returned = max(details.Returned, 0)
+			details.DurationMS = max(details.DurationMS, 0)
+			details.Liked = max(details.Liked, 0)
+			details.Disliked = max(details.Disliked, 0)
+			details.Uncertain = max(details.Uncertain, 0)
+			data, _ := json.Marshal(details)
+			entry.DetailsJSON = string(data)
+		}
 	}
 }
 

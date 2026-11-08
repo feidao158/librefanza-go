@@ -138,6 +138,13 @@ describe('RecommendationsView', () => {
       expect(wrapper.text()).toContain('推荐影片标题1')
     })
 
+    const refresh = wrapper.findAll('button').find(b => b.text().includes('换一批推荐'))
+    expect(refresh).toBeDefined()
+    await refresh!.trigger('click')
+    await vi.waitFor(() => {
+      expect((globalThis.fetch as any).mock.calls.some((c: any) => c[0].includes('page=2'))).toBe(true)
+    })
+
     // 点击推荐卡片上的“喜欢”按钮
     const cardButtons = wrapper.findAll('.grid-cols-3 button')
     expect(cardButtons.length).toBeGreaterThanOrEqual(3)

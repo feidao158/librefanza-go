@@ -1,19 +1,49 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/libredmm/librefanza/backend/internal/config"
 	"github.com/libredmm/librefanza/backend/internal/database"
 	"github.com/libredmm/librefanza/backend/internal/mailer"
+	"github.com/libredmm/librefanza/backend/internal/recommendation"
 	"github.com/libredmm/librefanza/backend/internal/settings"
 	"github.com/libredmm/librefanza/backend/internal/setup"
 	"github.com/libredmm/librefanza/backend/internal/sources"
 	"github.com/libredmm/librefanza/backend/internal/tasks"
 )
+
+func checkGorseHealth(ctx context.Context, endpoint, apiKey string) bool {
+	if endpoint == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/api/health/ready", nil)
+	if err != nil {
+		return false
+	}
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var health struct {
+		Ready bool `json:"Ready"`
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health) == nil && health.Ready
+}
 
 func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 	service := func(c *gin.Context) *settings.Service {
@@ -192,7 +222,29 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			respondError(c, http.StatusInternalServerError, "settings_unavailable")
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": gin.H{"entry_point": value.EntryPoint, "api_key_configured": value.APIKey != "", "enabled": value.Enabled, "min_feedback_count": value.MinFeedbackCount}})
+		data := gin.H{"entry_point": value.EntryPoint, "api_key_configured": value.APIKey != "", "enabled": value.Enabled, "min_feedback_count": value.MinFeedbackCount}
+		if os.Getenv("LIBREFANZA_MANAGED_GORSE") == "true" {
+			db, err := provider.Database(c.Request.Context())
+			if err != nil {
+				respondError(c, http.StatusServiceUnavailable, "database_unavailable")
+				return
+			}
+			progress, err := recommendation.ManagedSyncStatus(c.Request.Context(), db)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "settings_unavailable")
+				return
+			}
+			data["managed"] = true
+			data["sync"] = progress
+			healthy, err := recommendation.ManagedSyncHealthy(c.Request.Context(), db)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "settings_unavailable")
+				return
+			}
+			data["sync_error"] = !healthy
+			data["connected"] = value.Enabled && checkGorseHealth(c.Request.Context(), value.EntryPoint, value.APIKey)
+		}
+		c.JSON(http.StatusOK, gin.H{"data": data})
 	})
 	api.PUT("/admin/settings/gorse", func(c *gin.Context) {
 		svc := service(c)
@@ -219,21 +271,20 @@ func registerSettingsRoutes(api *gin.RouterGroup, provider *database.Provider) {
 			respondError(c, http.StatusBadRequest, "invalid_request")
 			return
 		}
-		client := &http.Client{Timeout: 3 * time.Second}
-		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, input.EntryPoint+"/api/health", nil)
-		if err != nil {
-			respondError(c, http.StatusBadRequest, "invalid_entry_point")
-			return
+		if input.APIKey == "" {
+			previous, err := svc.Gorse(c.Request.Context())
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "settings_unavailable")
+				return
+			}
+			if input.EntryPoint == previous.EntryPoint {
+				input.APIKey = previous.APIKey
+			}
 		}
-		if input.APIKey != "" {
-			req.Header.Set("X-API-Key", input.APIKey)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
+		if !checkGorseHealth(c.Request.Context(), input.EntryPoint, input.APIKey) {
 			respondError(c, http.StatusBadGateway, "gorse_unavailable")
 			return
 		}
-		_ = resp.Body.Close()
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"connected": true}})
 	})
 }

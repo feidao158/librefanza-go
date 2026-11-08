@@ -2,6 +2,7 @@ package recommendation
 
 import (
 	"context"
+	"net/url"
 
 	gorse "github.com/gorse-io/gorse-go"
 )
@@ -11,7 +12,12 @@ type GorseClientInterface interface {
 	InsertUser(ctx context.Context, user gorse.User) (gorse.RowAffected, error)
 	InsertItem(ctx context.Context, item gorse.Item) (gorse.RowAffected, error)
 	InsertFeedback(ctx context.Context, feedbacks []gorse.Feedback) (gorse.RowAffected, error)
+	DeleteFeedbacks(ctx context.Context, userID, itemID string) (gorse.RowAffected, error)
 	GetRecommend(ctx context.Context, userId string, category string, n, offset int) ([]string, error)
+}
+
+func (c *defaultGorseClient) DeleteFeedbacks(ctx context.Context, userID, itemID string) (gorse.RowAffected, error) {
+	return c.client.DeleteFeedbacks(ctx, url.PathEscape(userID), url.PathEscape(itemID))
 }
 
 // defaultGorseClient 基于官方 gorse-go SDK 的实现

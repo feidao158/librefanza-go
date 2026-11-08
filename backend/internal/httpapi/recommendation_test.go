@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/libredmm/librefanza/backend/internal/catalog"
 	"github.com/libredmm/librefanza/backend/internal/config"
 	"github.com/libredmm/librefanza/backend/internal/database"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
 	"github.com/libredmm/librefanza/backend/internal/setup"
 )
 
@@ -47,10 +49,10 @@ func TestRecommendationAPIWorkflow(t *testing.T) {
 	router := NewRouter(setup.NewService(store, setupBackend{}), provider)
 
 	// 创建测试影片
-	idPrefix := fmt.Sprintf("HTTP-REC-%d", time.Now().UnixNano())
+	idPrefix := fmt.Sprintf("HTTPREC%d", time.Now().UnixNano())
 	movieIDs := make([]string, 6)
 	for i := 0; i < 6; i++ {
-		id := fmt.Sprintf("%s-%d", idPrefix, i)
+		id := catalog.NormalizeProductID(fmt.Sprintf("%s%d", idPrefix, i))
 		movieIDs[i] = id
 		m := catalog.Movie{NormalizedID: id, CompressedID: id}
 		if err := db.Create(&m).Error; err != nil {
@@ -182,5 +184,12 @@ func TestRecommendationAPIWorkflow(t *testing.T) {
 	router.ServeHTTP(recFbRec, recFbReq)
 	if recFbRec.Code != http.StatusOK {
 		t.Fatalf("submit rec feedback: %d %s", recFbRec.Code, recFbRec.Body.String())
+	}
+	var entry logbook.Entry
+	if err := db.Where("source = ? AND event = ?", "recommendation", "recommendation_feedback").Order("id DESC").First(&entry).Error; err != nil {
+		t.Fatalf("反馈日志未保存：%v", err)
+	}
+	if !strings.Contains(entry.DetailsJSON, `"origin":"recommendation"`) || !strings.Contains(entry.DetailsJSON, `"action":"like"`) || strings.Contains(entry.DetailsJSON, clientID) || strings.Contains(entry.DetailsJSON, movieIDs[5]) {
+		t.Fatalf("反馈日志内容不正确：%s", entry.DetailsJSON)
 	}
 }

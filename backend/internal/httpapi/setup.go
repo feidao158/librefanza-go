@@ -45,7 +45,8 @@ func NewRouter(service *setup.Service, providers ...*database.Provider) *gin.Eng
 			respondError(c, http.StatusServiceUnavailable, "configuration_unavailable")
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": gin.H{"installed": installed}})
+		_, managedDatabase := setup.ManagedDatabase()
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"installed": installed, "managed_database_available": managedDatabase}})
 	})
 	api.POST("/setup/database-checks", func(c *gin.Context) {
 		var request config.Database

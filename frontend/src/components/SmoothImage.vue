@@ -14,17 +14,19 @@ const props = withDefaults(
     loading?: 'lazy' | 'eager'
     wrapperClass?: string
     imgClass?: string
+    blurBackdrop?: boolean
   }>(),
   {
     src: '',
     alt: '',
-    aspect: 'aspect-[2/3]',
-    objectFit: 'cover',
+    aspect: '',
+    objectFit: 'contain',
     fallbackText: '',
     referrerpolicy: 'no-referrer',
     loading: 'lazy',
     wrapperClass: '',
     imgClass: '',
+    blurBackdrop: false,
   }
 )
 
@@ -61,7 +63,7 @@ function handleError() {
 </script>
 
 <template>
-  <div class="relative overflow-hidden bg-base-200 select-none" :class="[aspect, wrapperClass]">
+  <div class="relative overflow-hidden bg-base-200 select-none flex items-center justify-center" :class="[aspect, wrapperClass]">
     <!-- 骨架屏占位与呼吸脉冲动画 -->
     <div
       v-if="!isLoaded && !hasError && src"
@@ -69,6 +71,16 @@ function handleError() {
     >
       <div class="w-7 h-7 rounded-full border-2 border-base-content/15 border-t-primary/70 animate-spin" />
     </div>
+
+    <!-- 背景虚化氛围图：完整展示（object-contain）时柔和填充留白，消除突兀空隙 -->
+    <img
+      v-if="blurBackdrop && src && !hasError && isLoaded"
+      :src="src"
+      alt=""
+      aria-hidden="true"
+      :referrerpolicy="referrerpolicy"
+      class="absolute inset-0 w-full h-full object-cover blur-2xl opacity-25 scale-125 pointer-events-none select-none z-0"
+    />
 
     <!-- 无图或加载失败占位提示 -->
     <div
@@ -79,14 +91,14 @@ function handleError() {
       <span v-if="fallbackText" class="text-xs font-medium">{{ fallbackText }}</span>
     </div>
 
-    <!-- 真实图片（平滑渐显与轻微缩放过渡） -->
+    <!-- 真实图片（平滑渐显，支持完整显示 object-contain，保证封面完整不被裁剪） -->
     <img
       v-if="src && !hasError"
       :src="src"
       :alt="alt || ''"
       :loading="loading"
       :referrerpolicy="referrerpolicy"
-      class="w-full h-full transition-all duration-350 ease-out z-1"
+      class="w-full h-full transition-all duration-350 ease-out z-1 relative"
       :class="[
         objectFit === 'contain' ? 'object-contain' : 'object-cover',
         isLoaded ? 'opacity-100 scale-100 blur-0' : 'opacity-0 scale-[1.03] blur-xs',

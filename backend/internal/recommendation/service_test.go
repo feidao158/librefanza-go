@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/catalog"
 	"github.com/libredmm/librefanza/backend/internal/config"
 	"github.com/libredmm/librefanza/backend/internal/database"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
 	"github.com/libredmm/librefanza/backend/internal/settings"
 )
 
@@ -22,6 +24,8 @@ type mockGorseClient struct {
 	insertedFeedbacks []gorse.Feedback
 	recommendResults  []string
 	recommendErr      error
+	recommendCalls    int
+	recommendUser     string
 }
 
 func (m *mockGorseClient) InsertUser(ctx context.Context, user gorse.User) (gorse.RowAffected, error) {
@@ -39,7 +43,13 @@ func (m *mockGorseClient) InsertFeedback(ctx context.Context, feedbacks []gorse.
 	return gorse.RowAffected{RowAffected: len(feedbacks)}, nil
 }
 
+func (m *mockGorseClient) DeleteFeedbacks(ctx context.Context, userID, itemID string) (gorse.RowAffected, error) {
+	return gorse.RowAffected{}, nil
+}
+
 func (m *mockGorseClient) GetRecommend(ctx context.Context, userId string, category string, n, offset int) ([]string, error) {
+	m.recommendCalls++
+	m.recommendUser = userId
 	if m.recommendErr != nil {
 		return nil, m.recommendErr
 	}
@@ -108,6 +118,8 @@ func TestRecommendationAndAnnotation(t *testing.T) {
 	}, mockGorse)
 
 	userID := fmt.Sprintf("test-user-%d", time.Now().UnixNano())
+	defer db.Where("user_id = ?", userID).Delete(&UserFeedback{})
+	defer db.Where("user_id = ?", userID).Delete(&UserRecommendationProfile{})
 
 	// 1. 验证初始状态未就绪
 	stats, err := svc.GetStats(context.Background(), userID)
@@ -126,7 +138,7 @@ func TestRecommendationAndAnnotation(t *testing.T) {
 
 	movieIDs := make([]string, 7)
 	for i := 0; i < 7; i++ {
-		id := fmt.Sprintf("TEST-REC-%d-%d", time.Now().UnixNano(), i)
+		id := catalog.NormalizeProductID(fmt.Sprintf("TESTREC%d%d", time.Now().UnixNano(), i))
 		movieIDs[i] = id
 		m := catalog.Movie{NormalizedID: id, CompressedID: id}
 		if err := db.Create(&m).Error; err != nil {
@@ -218,6 +230,17 @@ func TestRecommendationAndAnnotation(t *testing.T) {
 	if params.Actresses[actressDisliked] >= 0 {
 		t.Fatalf("expected negative weight for disliked actress, got %f", params.Actresses[actressDisliked])
 	}
+	if params.Actresses["一般演员"] != 1 {
+		t.Fatalf("uncertain feedback must not increase preference: %f", params.Actresses["一般演员"])
+	}
+	duplicate := catalog.SourceItem{
+		Source: "mgstage", ExternalID: movieIDs[6], NormalizedID: movieIDs[6],
+		MetadataJSON: `{"genres":["剧情"]}`,
+	}
+	if err := db.Create(&duplicate).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("id = ?", duplicate.ID).Delete(&catalog.SourceItem{})
 
 	// 4. 测试猜你喜欢生效（Fallback 参数打分推荐）
 	recs, recStats, total, err := svc.GetRecommendations(context.Background(), userID, 1, 10)
@@ -227,18 +250,74 @@ func TestRecommendationAndAnnotation(t *testing.T) {
 	if !recStats.Ready {
 		t.Fatalf("expected recStats.Ready=true")
 	}
+	var recLog logbook.Entry
+	if err := db.Where("source = ? AND event = ?", "recommendation", "recommendation_served").Order("id DESC").First(&recLog).Error; err != nil || !strings.Contains(recLog.DetailsJSON, `"algorithm":"local"`) {
+		t.Fatalf("本地推荐日志未落库：%+v %v", recLog, err)
+	}
 	if total == 0 || len(recs) == 0 {
 		t.Fatalf("expected recommendations to return items, got %d", len(recs))
 	}
+	if len(recs) != 2 || recs[0].NormalizedID != movieIDs[5] {
+		t.Fatalf("duplicate source metadata must not change ranking: %+v", recs)
+	}
+	var oldMovie catalog.Movie
+	if err := db.Where("normalized_id = ?", movieIDs[6]).First(&oldMovie).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO movie_cast (movie_id, name) VALUES (?, ?)", oldMovie.ID, actressLiked).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Exec("DELETE FROM movie_cast WHERE movie_id = ?", oldMovie.ID)
+	now := time.Now().UTC()
+	var recent []catalog.Movie
+	for i := 0; i < 1000; i++ {
+		id := fmt.Sprintf("RECENT-%s-%d", userID, i)
+		recent = append(recent, catalog.Movie{NormalizedID: id, CompressedID: id, ReleaseDate: &now})
+	}
+	if err := db.CreateInBatches(recent, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("normalized_id LIKE ?", "RECENT-"+userID+"-%").Delete(&catalog.Movie{})
+	recs, _, _, err = svc.GetRecommendations(context.Background(), userID, 1, 10)
+	if err != nil || len(recs) == 0 || recs[0].NormalizedID != movieIDs[6] {
+		t.Fatalf("preferred actress must recall older movies: %v %v", recs, err)
+	}
+	if err := db.Where("normalized_id LIKE ?", "RECENT-"+userID+"-%").Delete(&catalog.Movie{}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// 推荐服务结果不足时使用本地候选补足，翻页不能重复。
+	mockGorse.recommendResults = []string{movieIDs[5]}
+	firstPage, _, totalMixed, err := svc.GetRecommendations(context.Background(), userID, 1, 1)
+	if err != nil || len(firstPage) != 1 || firstPage[0].NormalizedID != movieIDs[5] || totalMixed < 2 {
+		t.Fatalf("推荐第一页及候选总数不正确：%v %d %v", firstPage, totalMixed, err)
+	}
+	secondPage, _, _, err := svc.GetRecommendations(context.Background(), userID, 2, 1)
+	if err != nil || len(secondPage) != 1 || secondPage[0].NormalizedID != movieIDs[6] {
+		t.Fatalf("推荐第二页应由本地候选补足且不能重复：%v %v", secondPage, err)
+	}
+	var dislikedCandidate catalog.Movie
+	if err := db.Where("normalized_id = ?", movieIDs[5]).First(&dislikedCandidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO movie_cast (movie_id, name) VALUES (?, ?)", dislikedCandidate.ID, actressDisliked).Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Exec("DELETE FROM movie_cast WHERE movie_id = ?", dislikedCandidate.ID)
+	mockGorse.recommendResults = []string{movieIDs[5], movieIDs[6]}
+	reordered, _, _, err := svc.GetRecommendations(context.Background(), userID, 1, 2)
+	if err != nil || len(reordered) != 2 || reordered[0].NormalizedID != movieIDs[6] {
+		t.Fatalf("推荐排序应考虑已保存的喜欢和不喜欢特征：%v %v", reordered, err)
+	}
 
 	// 5. 测试 Gorse 推荐协同过滤返回
-	mockGorse.recommendResults = []string{movieIDs[5], movieIDs[6]}
+	mockGorse.recommendResults = []string{movieIDs[0], movieIDs[3], movieIDs[5], movieIDs[6]}
 	gorseRecs, _, _, err := svc.GetRecommendations(context.Background(), userID, 1, 10)
 	if err != nil {
 		t.Fatalf("gorse recommendations error: %v", err)
 	}
-	if len(gorseRecs) != 2 || gorseRecs[0].NormalizedID != movieIDs[5] {
-		t.Fatalf("expected gorse recommendation first item to be %s", movieIDs[5])
+	if len(gorseRecs) != 2 || gorseRecs[0].NormalizedID != movieIDs[6] {
+		t.Fatalf("expected gorse recommendation first item to be %s", movieIDs[6])
 	}
 
 	// 6. 测试在猜你喜欢页面继续标注
@@ -251,5 +330,43 @@ func TestRecommendationAndAnnotation(t *testing.T) {
 	}
 	if stats6.Total != 6 || stats6.Liked < 3 {
 		t.Fatalf("unexpected stats after 6th rating: %+v", stats6)
+	}
+
+	var extra []UserFeedback
+	for i := 0; i < 1001; i++ {
+		extra = append(extra, UserFeedback{UserID: userID, NormalizedID: fmt.Sprintf("EXTRA-%d", i), FeedbackType: "uncertain"})
+	}
+	if err := db.CreateInBatches(extra, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	mockGorse.recommendResults = nil
+	recs, _, _, err = svc.GetRecommendations(context.Background(), userID, 1, 10)
+	if err != nil || len(recs) != 1 || recs[0].NormalizedID != movieIDs[6] {
+		t.Fatalf("rated movies must remain excluded with many feedbacks: %v %v", recs, err)
+	}
+	next, _, err := svc.GetNextAnnotation(context.Background(), userID, movieIDs[6])
+	if err != nil || next != nil {
+		t.Fatalf("annotation exclusions must apply with many feedbacks: %v %v", next, err)
+	}
+
+	t.Setenv("LIBREFANZA_MANAGED_GORSE", "true")
+	defer db.Where("name = ?", managedSyncName).Delete(&managedSyncState{})
+	mockGorse.recommendResults = []string{movieIDs[6]}
+	calls := mockGorse.recommendCalls
+	if _, _, _, err := svc.GetRecommendations(context.Background(), userID, 1, 10); err != nil || mockGorse.recommendCalls != calls {
+		t.Fatalf("首次同步完成前不应使用 Gorse：%v", err)
+	}
+	if err := db.Create(&managedSyncState{Name: managedSyncName, Value: `{"phase":"movies","ready":true}`, UpdatedAt: time.Now().UTC()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := svc.GetRecommendations(context.Background(), userID, 1, 10); err != nil || mockGorse.recommendCalls != calls+1 || mockGorse.recommendUser != managedUserID(userID) {
+		t.Fatalf("首次同步完成后应使用内部用户标识：%v", err)
+	}
+	defer db.Where("name = ?", managedSyncHealthName).Delete(&managedSyncState{})
+	if err := SetManagedSyncHealthy(context.Background(), db, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := svc.GetRecommendations(context.Background(), userID, 1, 10); err != nil || mockGorse.recommendCalls != calls+1 {
+		t.Fatalf("同步异常时应回退本地推荐：%v", err)
 	}
 }

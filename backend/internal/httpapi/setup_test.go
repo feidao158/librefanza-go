@@ -45,6 +45,20 @@ func TestSetupAPIClosesAfterInitialization(t *testing.T) {
 	}
 }
 
+func TestSetupReportsManagedDatabaseWithoutCredentials(t *testing.T) {
+	t.Setenv("LIBREFANZA_MANAGED_DB_HOST", "postgres")
+	t.Setenv("LIBREFANZA_MANAGED_DB_NAME", "internal")
+	t.Setenv("LIBREFANZA_MANAGED_DB_USER", "internal")
+	t.Setenv("LIBREFANZA_MANAGED_DB_PASSWORD", "private-secret")
+	service := setup.NewService(config.NewStore(t.TempDir()), setupBackend{})
+	defer service.Close()
+	status := httptest.NewRecorder()
+	NewRouter(service).ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil))
+	if !bytes.Contains(status.Body.Bytes(), []byte(`"managed_database_available":true`)) || bytes.Contains(status.Body.Bytes(), []byte("private-secret")) {
+		t.Fatalf("内置数据库状态不正确：%s", status.Body.String())
+	}
+}
+
 func TestOpenAPIDocumentIsAvailable(t *testing.T) {
 	service := setup.NewService(config.NewStore(t.TempDir()), setupBackend{})
 	defer service.Close()

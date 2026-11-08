@@ -1,0 +1,25 @@
+[database]
+table_prefix = "gorse_"
+
+[database.postgres]
+max_open_conns = 8
+max_idle_conns = 4
+
+[master]
+host = "0.0.0.0"
+http_host = "0.0.0.0"
+n_jobs = 1
+
+[server]
+auto_insert_user = true
+auto_insert_item = false
+
+[recommend]
+cache_size = 100
+
+[recommend.data_source]
+positive_feedback_types = ["like"]
+read_feedback_types = ["read", "dislike"]
+
+[blob]
+uri = "/var/lib/gorse/blob"

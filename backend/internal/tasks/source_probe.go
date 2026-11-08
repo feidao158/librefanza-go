@@ -54,7 +54,7 @@ func (m *Manager) EnsureSourceProbes(ctx context.Context) error {
 		if state.Verified || state.NextRetry != nil && state.NextRetry.After(now) || state.LastChecked != nil && state.LastChecked.After(now.Add(-30*time.Minute)) {
 			continue
 		}
-		_, err = m.queue.Enqueue(ctx, "source_probe", sourceProbeArgs{Source: source}, jobs.QueueOpt("backfill"), jobs.Unique("source_probe:"+source), jobs.Retries(0), jobs.Timeout(5*time.Minute))
+		_, err = m.queue.Enqueue(ctx, "source_probe", sourceProbeArgs{Source: source}, jobs.QueueOpt("source_backfill"), jobs.Unique("source_probe:"+source), jobs.Retries(0), jobs.Timeout(5*time.Minute))
 		if err != nil && !errors.Is(err, jobs.ErrDuplicateJob) {
 			return err
 		}

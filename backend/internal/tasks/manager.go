@@ -68,6 +68,9 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 	if err := storage.Migrate(context.Background()); err != nil {
 		return nil, err
 	}
+	if err := migrateSourceBackfillJobs(context.Background(), db); err != nil {
+		return nil, err
+	}
 	queue := jobs.New(storage)
 	manager := &Manager{db: db, storage: storage, queue: queue, logs: logbook.New(db, os.Stdout)}
 	queue.UseExecutionMiddleware(manager.logExecution)
@@ -103,6 +106,7 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 		jobs.WorkerQueue("default", jobs.Concurrency(4)),
 		jobs.WorkerQueue("metadata", jobs.Concurrency(1)),
 		jobs.WorkerQueue("backfill", jobs.Concurrency(1)),
+		jobs.WorkerQueue("source_backfill", jobs.Concurrency(1)),
 		jobs.WithPollInterval(200 * time.Millisecond),
 		jobs.WithScheduler(true),
 		jobs.WithDrainTimeout(5 * time.Second),
@@ -112,6 +116,10 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 	worker := jobs.NewWorker(queue, append(options, overrides...)...)
 	manager.worker = worker
 	return manager, nil
+}
+
+func migrateSourceBackfillJobs(ctx context.Context, db *gorm.DB) error {
+	return db.WithContext(ctx).Table("jobs").Where("queue = ? AND type IN ? AND status IN ?", "backfill", []string{"source_history_backfill", "source_probe"}, []string{"pending", "retrying", "waiting", "paused"}).Update("queue", "source_backfill").Error
 }
 
 func (m *Manager) Start(parent context.Context) error {

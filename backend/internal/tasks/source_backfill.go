@@ -57,6 +57,9 @@ type sourceHistoryArgs struct {
 }
 
 func (m *Manager) EnsureSourceBackfill(ctx context.Context) error {
+	if err := migrateSourceBackfillJobs(ctx, m.db); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	var coverLimit uint64
 	if err := m.db.WithContext(ctx).Model(&catalog.SourceItem{}).Select("COALESCE(MAX(id), 0)").Scan(&coverLimit).Error; err != nil {
@@ -132,7 +135,7 @@ func (m *Manager) EnsureSourceBackfill(ctx context.Context) error {
 }
 
 func (m *Manager) enqueueSourceHistory(ctx context.Context, source string) error {
-	_, err := m.queue.Enqueue(ctx, "source_history_backfill", sourceHistoryArgs{Source: source}, jobs.QueueOpt("backfill"), jobs.Unique("source_history_backfill:"+source), jobs.Retries(3), jobs.Timeout(24*time.Hour))
+	_, err := m.queue.Enqueue(ctx, "source_history_backfill", sourceHistoryArgs{Source: source}, jobs.QueueOpt("source_backfill"), jobs.Unique("source_history_backfill:"+source), jobs.Retries(3), jobs.Timeout(24*time.Hour))
 	if errors.Is(err, jobs.ErrDuplicateJob) {
 		return nil
 	}

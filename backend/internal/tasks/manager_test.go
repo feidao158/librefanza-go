@@ -16,6 +16,108 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/database"
 )
 
+func TestSourceBackfillQueueRunsWhileMetadataBackfillIsBusy(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	search := func(context.Context, string) (bool, error) { return false, nil }
+	oldManager, err := NewManager(db, search)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldManager.queue.Register("source_history_backfill", func(context.Context, sourceHistoryArgs) error { return nil })
+	oldJob, err := oldManager.queue.Enqueue(context.Background(), "source_history_backfill", sourceHistoryArgs{Source: "javdb"}, jobs.QueueOpt("backfill"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("id = ?", oldJob).Delete(&jobs.Job{})
+	manager, err := NewManager(db, search)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrated jobs.Job
+	if err := db.First(&migrated, "id = ?", oldJob).Error; err != nil || migrated.Queue != "source_backfill" {
+		t.Fatalf("旧来源回填任务应迁入独立队列：%+v %v", migrated, err)
+	}
+	lateJob, err := oldManager.queue.Enqueue(context.Background(), "source_history_backfill", sourceHistoryArgs{Source: "javbooks"}, jobs.QueueOpt("backfill"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("id = ?", lateJob).Delete(&jobs.Job{})
+	completed := make(chan struct{}, 1)
+	manager.queue.Register("source_history_backfill", func(context.Context, sourceHistoryArgs) error {
+		select {
+		case completed <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	if err := manager.EnsureSourceBackfill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	migrated = jobs.Job{}
+	if err := db.First(&migrated, "id = ?", lateJob).Error; err != nil || migrated.Queue != "source_backfill" {
+		t.Fatalf("恢复后重新排队的旧任务应迁入独立队列：%+v %v", migrated, err)
+	}
+	runningJob, err := oldManager.queue.Enqueue(context.Background(), "source_history_backfill", sourceHistoryArgs{Source: "javquery"}, jobs.QueueOpt("backfill"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("id = ?", runningJob).Delete(&jobs.Job{})
+	if err := db.Model(&jobs.Job{}).Where("id = ?", runningJob).Update("status", "running").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.EnsureSourceBackfill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	migrated = jobs.Job{}
+	if err := db.First(&migrated, "id = ?", runningJob).Error; err != nil || migrated.Queue != "backfill" {
+		t.Fatalf("运行中的任务不能迁移：%+v %v", migrated, err)
+	}
+	if err := db.Where("id = ?", runningJob).Delete(&jobs.Job{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan struct{})
+	started := make(chan struct{})
+	manager.queue.Register("test_blocking_backfill", func(ctx context.Context, _ struct{}) error {
+		close(started)
+		select {
+		case <-blocked:
+		case <-ctx.Done():
+		}
+		return nil
+	})
+	if _, err := manager.queue.Enqueue(context.Background(), "test_blocking_backfill", struct{}{}, jobs.QueueOpt("backfill")); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	defer close(blocked)
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("元数据回填未开始")
+	}
+	select {
+	case <-completed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("来源回填被元数据回填阻塞")
+	}
+}
+
 func TestDatabaseQueueDeduplicatesAndRespectsCooldown(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {

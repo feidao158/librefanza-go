@@ -12,6 +12,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/database"
 	"github.com/libredmm/librefanza/backend/internal/ingest"
 	"github.com/libredmm/librefanza/backend/internal/logbook"
+	"github.com/libredmm/librefanza/backend/internal/recommendation"
 	"github.com/libredmm/librefanza/backend/internal/settings"
 	"github.com/libredmm/librefanza/backend/internal/sourcehealth"
 	"github.com/libredmm/librefanza/backend/internal/sources"
@@ -199,6 +200,11 @@ func (r *Runner) Manager(ctx context.Context) (*tasks.Manager, error) {
 }
 
 func (r *Runner) Run() {
+	if os.Getenv("LIBREFANZA_MANAGED_GORSE") == "true" {
+		done := make(chan struct{})
+		go func() { defer close(done); r.runManagedRecommendationSync() }()
+		defer func() { <-done }()
+	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	logs := logbook.New(nil, os.Stdout)
@@ -231,6 +237,63 @@ func (r *Runner) Run() {
 		case <-r.ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func (r *Runner) runManagedRecommendationSync() {
+	logs := logbook.New(nil, os.Stdout)
+	failed := false
+	healthKnown := false
+	for r.ctx.Err() == nil {
+		delay := 20 * time.Millisecond
+		ctx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
+		db, err := r.provider.Database(ctx)
+		if err == nil {
+			logs = logbook.New(db, os.Stdout)
+			var cfg settings.GorseSettings
+			cfg, err = settings.NewService(db).Gorse(ctx)
+			if err == nil {
+				err = recommendation.ManagedSyncStep(ctx, db, cfg)
+			}
+		}
+		cancel()
+		switch {
+		case errors.Is(err, recommendation.ErrManagedSyncIdle), errors.Is(err, database.ErrNotInstalled):
+			delay = 10 * time.Second
+		case err != nil:
+			delay = 10 * time.Second
+			if !failed {
+				healthKnown = false
+			}
+			if !healthKnown && db != nil && r.ctx.Err() == nil {
+				healthCtx, healthCancel := context.WithTimeout(r.ctx, 2*time.Second)
+				healthKnown = recommendation.SetManagedSyncHealthy(healthCtx, db, false) == nil
+				healthCancel()
+			}
+			if !failed && r.ctx.Err() == nil {
+				logs.Record(r.ctx, logbook.Entry{Level: "error", Event: "recommendation_sync_failed", Source: "recommendation", Reason: "unknown"})
+				failed = true
+			}
+		default:
+			if !healthKnown || failed {
+				healthCtx, healthCancel := context.WithTimeout(r.ctx, 2*time.Second)
+				healthKnown = recommendation.SetManagedSyncHealthy(healthCtx, db, true) == nil
+				healthCancel()
+			}
+			if failed {
+				logs.Record(r.ctx, logbook.Entry{Level: "info", Event: "recommendation_sync_resumed", Source: "recommendation"})
+				failed = false
+			}
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-r.ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		case <-timer.C:
 		}
 	}
 }

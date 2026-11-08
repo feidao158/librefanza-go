@@ -18,6 +18,7 @@ interface LogEntry {
   stage: string
   position_type: string
   position: number
+  details_json?: string
 }
 
 const props = withDefaults(defineProps<{ taskId?: string }>(), { taskId: '' })
@@ -52,6 +53,10 @@ function formatTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
+function recommendationDetails(entry: LogEntry): Record<string, string | number> {
+  if (entry.source !== 'recommendation' || !entry.details_json) return {}
+  try { return JSON.parse(entry.details_json) as Record<string, string | number> } catch { return {} }
+}
 
 onMounted(load)
 watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; void load() })
@@ -65,7 +70,7 @@ watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; vo
     </div>
     <form class="log-filters" @submit.prevent="search">
       <label class="field"><span>{{ $t('logs.level') }}</span><select v-model="filters.level" name="level" class="select select-sm"><option value="">{{ $t('common.all') }}</option><option value="error">{{ $t('logs.levels.error') }}</option><option value="warn">{{ $t('logs.levels.warn') }}</option><option value="info">{{ $t('logs.levels.info') }}</option></select></label>
-      <label class="field"><span>{{ $t('common.source') }}</span><select v-model="filters.source" name="source" class="select select-sm"><option value="">{{ $t('common.all') }}</option><option v-for="source in ['fanza', 'sod', 'mgstage', 'fc2', 'jable', 'avmoo', 'javlibrary', 'libredmm', 'javdb', 'javbus', 'javbooks', 'javquery']" :key="source" :value="source">{{ source.toUpperCase() }}</option></select></label>
+      <label class="field"><span>{{ $t('common.source') }}</span><select v-model="filters.source" name="source" class="select select-sm"><option value="">{{ $t('common.all') }}</option><option value="recommendation">{{ $t('recommendationLog.source') }}</option><option v-for="source in ['fanza', 'sod', 'mgstage', 'fc2', 'jable', 'avmoo', 'javlibrary', 'libredmm', 'javdb', 'javbus', 'javbooks', 'javquery']" :key="source" :value="source">{{ source.toUpperCase() }}</option></select></label>
       <label class="field log-task-filter"><span>{{ $t('logs.taskID') }}</span><input v-model="filters.task_id" name="task_id" class="input input-sm" maxlength="36" :placeholder="$t('logs.taskID')"></label>
       <button class="btn btn-sm search-button" :disabled="busy"><Search :size="15" />{{ $t('common.filter') }}</button>
     </form>
@@ -76,7 +81,7 @@ watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; vo
       <article v-for="entry in entries" :key="entry.id" class="log-row">
         <div class="log-time"><time :datetime="entry.created_at">{{ formatTime(entry.created_at) }}</time><span class="log-level" :class="`log-level-${entry.level}`">{{ $te(`logs.levels.${entry.level}`) ? $t(`logs.levels.${entry.level}`) : entry.level }}</span></div>
         <div class="log-detail">
-          <div class="log-event">{{ $te(`logs.events.${entry.event}`) ? $t(`logs.events.${entry.event}`) : entry.event }}</div>
+          <div class="log-event">{{ $te(`recommendationLog.events.${entry.event}`) ? $t(`recommendationLog.events.${entry.event}`) : $te(`logs.events.${entry.event}`) ? $t(`logs.events.${entry.event}`) : entry.event }}</div>
           <div v-if="entry.reason" class="log-reason">{{ $te(`logs.reasons.${entry.reason}`) ? $t(`logs.reasons.${entry.reason}`) : $te(`sourceHealth.${entry.reason}`) ? $t(`sourceHealth.${entry.reason}`) : $t('logs.reasons.unknown') }}<span v-if="entry.http_status"> HTTP {{ entry.http_status }}</span></div>
           <div class="log-meta">
             <span v-if="entry.source">{{ entry.source.toUpperCase() }}</span>
@@ -85,6 +90,9 @@ watch(() => props.taskId, value => { filters.task_id = value; page.value = 1; vo
             <span v-if="entry.stage && $te(`logs.stages.${entry.stage}`)">{{ $t(`logs.stages.${entry.stage}`) }}</span>
             <span v-if="entry.position_type === 'page'">{{ $t('logs.positionPage', { number: entry.position }) }}</span>
             <span v-if="entry.position_type === 'number'">{{ $t('logs.positionNumber', { number: entry.position }) }}</span>
+          </div>
+          <div v-if="entry.source === 'recommendation'" class="log-meta">
+            <span v-for="(value, key) in recommendationDetails(entry)" :key="key">{{ $te(`recommendationLog.fields.${key}`) ? $t(`recommendationLog.fields.${key}`) : key }}：{{ typeof value === 'string' && $te(`recommendationLog.values.${value}`) ? $t(`recommendationLog.values.${value}`) : value }}</span>
           </div>
           <div v-if="entry.task_id" class="log-task-id">{{ entry.task_id }}</div>
         </div>

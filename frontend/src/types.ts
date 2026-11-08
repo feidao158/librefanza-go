@@ -87,4 +87,8 @@ export interface GorseSettings {
   api_key_configured: boolean
   enabled: boolean
   min_feedback_count: number
+  managed?: boolean
+  connected?: boolean
+  sync_error?: boolean
+  sync?: { phase: string; cursor: number; ready: boolean; next_cycle: string }
 }

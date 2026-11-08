@@ -47,6 +47,38 @@ func TestSetupCanOnlyCompleteOnce(t *testing.T) {
 	}
 }
 
+func TestManagedDatabaseUsesServerConfiguration(t *testing.T) {
+	t.Setenv("LIBREFANZA_MANAGED_DB_HOST", "postgres")
+	t.Setenv("LIBREFANZA_MANAGED_DB_NAME", "internal")
+	t.Setenv("LIBREFANZA_MANAGED_DB_USER", "internal")
+	t.Setenv("LIBREFANZA_MANAGED_DB_PASSWORD", "private-password")
+	store := config.NewStore(t.TempDir())
+	service := NewService(store, &fakeBackend{})
+	defer service.Close()
+	request := testRequest()
+	request.ManagedDatabase = true
+	request.Database.Host = "untrusted-client-host"
+	if err := service.Initialize(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := store.Load()
+	if err != nil || cfg.Database.Host != "postgres" || cfg.Database.Password != "private-password" || cfg.Database.Driver != "postgres" {
+		t.Fatalf("托管数据库配置不正确：%v", err)
+	}
+}
+
+func TestManagedDatabaseRejectsMissingServerCredentials(t *testing.T) {
+	t.Setenv("LIBREFANZA_MANAGED_DB_HOST", "")
+	backend := &fakeBackend{}
+	service := NewService(config.NewStore(t.TempDir()), backend)
+	defer service.Close()
+	request := testRequest()
+	request.ManagedDatabase = true
+	if err := service.Initialize(context.Background(), request); !errors.Is(err, ErrInvalidInput) || backend.preparations != 0 {
+		t.Fatalf("内置数据库配置缺失时应拒绝安装：%v", err)
+	}
+}
+
 func TestSetupResumesAfterPreparationFailure(t *testing.T) {
 	backend := &fakeBackend{fail: true}
 	service := NewService(config.NewStore(t.TempDir()), backend)

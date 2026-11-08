@@ -27,7 +27,7 @@ paths:
       summary: 获取安装状态
       responses:
         '200':
-          description: 返回 data.installed
+          description: 返回 data.installed 和 data.managed_database_available，不包含数据库连接凭据
   /setup/database-checks:
     post:
       tags: [安装]
@@ -61,9 +61,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [database, email, password]
+              required: [email, password]
               properties:
                 database: { $ref: '#/components/schemas/Database' }
+                managed_database: { type: boolean, description: 使用服务端配置的内置数据库，默认为 false }
                 redis: { $ref: '#/components/schemas/Redis' }
                 email: { type: string, format: email }
                 password: { type: string, format: password, minLength: 8 }
@@ -193,6 +194,7 @@ paths:
     get:
       tags: [推荐与人工标注]
       summary: 猜你喜欢：获取个性化推荐影片列表
+      description: 本地推荐在有限候选池内排序并分页，total 为本次候选池数量；Gorse 推荐的 total 为当前返回数量。
       parameters:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/PageSize' }
@@ -510,6 +512,7 @@ paths:
     get:
       tags: [管理]
       summary: 获取 Gorse 推荐系统配置
+      description: 内置模式额外返回 managed、connected 和 sync，sync 包含首次对账状态、阶段与游标。
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: Gorse 配置 } }
     put:

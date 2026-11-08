@@ -36,6 +36,10 @@ const smtp = reactive<SMTP>({ enabled: false, host: '', port: 587, username: '',
 const gorse = reactive({ enabled: false, entry_point: '', api_key: '', min_feedback_count: 5 })
 const redisHasPassword = ref(false)
 const gorseHasKey = ref(false)
+const gorseManaged = ref(false)
+const gorseConnected = ref(false)
+const gorseSyncError = ref(false)
+const gorseSync = ref<GorseSettings['sync']>()
 const filter = ref('')
 const items = ref<SourceItem[]>([])
 const pages = ref<Page[]>([])
@@ -78,6 +82,10 @@ async function load() {
       const value = (await api<GorseSettings>('/admin/settings/gorse')).data
       Object.assign(gorse, { enabled: value.enabled, entry_point: value.entry_point || '', min_feedback_count: value.min_feedback_count || 5, api_key: '' })
       gorseHasKey.value = value.api_key_configured
+      gorseManaged.value = !!value.managed
+      gorseConnected.value = !!value.connected
+      gorseSyncError.value = !!value.sync_error
+      gorseSync.value = value.sync
     } else if (section.value === 'items') {
       const response = await api<SourceItem[]>(`/admin/source-items?source=${encodeURIComponent(filter.value)}&page=${page.value}`)
       items.value = response.data || []; total.value = response.meta?.total || 0
@@ -225,12 +233,20 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
 
         <form v-else-if="section === 'gorse'" class="admin-form" @submit.prevent="saveGorse">
           <h2>{{ $t('admin.gorse') }}</h2>
+          <div v-if="gorseManaged" class="log-meta">
+            <span>{{ $t('managedGorse.internal') }}</span>
+            <span>{{ gorseConnected ? $t('managedGorse.connected') : $t('managedGorse.disconnected') }}</span>
+            <span v-if="gorseSyncError">{{ $t('managedGorse.error') }}</span>
+            <span>{{ gorseSync?.ready ? $t('managedGorse.ready') : $t('managedGorse.syncing') }}</span>
+            <span v-if="gorseSync?.phase">{{ $t(`managedGorse.${gorseSync.phase}`) }}: {{ gorseSync.cursor }}</span>
+            <button type="button" class="btn btn-ghost btn-square btn-sm" :title="$t('common.retry')" @click="load"><RefreshCw :size="16" /></button>
+          </div>
           <label class="toggle-row"><span>{{ $t('admin.gorseEnabled') }}</span><input v-model="gorse.enabled" class="toggle toggle-success" type="checkbox"></label>
-          <label class="field"><span>{{ $t('admin.gorseEntryPoint') }}</span><input v-model="gorse.entry_point" class="input" placeholder="http://127.0.0.1:8088"></label>
-          <label class="field"><span>{{ $t('admin.gorseAPIKey') }}</span><input v-model="gorse.api_key" class="input" type="password" :placeholder="gorseHasKey ? $t('admin.configured') : ''"></label>
+          <label v-if="!gorseManaged" class="field"><span>{{ $t('admin.gorseEntryPoint') }}</span><input v-model="gorse.entry_point" class="input" placeholder="http://127.0.0.1:8088"></label>
+          <label v-if="!gorseManaged" class="field"><span>{{ $t('admin.gorseAPIKey') }}</span><input v-model="gorse.api_key" class="input" type="password" :placeholder="gorseHasKey ? $t('admin.configured') : ''"></label>
           <label class="field"><span>{{ $t('admin.gorseMinCount') }}</span><input v-model.number="gorse.min_feedback_count" class="input" type="number" min="1" max="100"></label>
           <div class="field-actions">
-            <button type="button" class="btn btn-outline" :disabled="busy || !gorse.entry_point" @click="testGorse">{{ $t('admin.gorseTest') }}</button>
+            <button v-if="!gorseManaged" type="button" class="btn btn-outline" :disabled="busy || !gorse.entry_point" @click="testGorse">{{ $t('admin.gorseTest') }}</button>
             <button class="btn search-button" :disabled="busy"><Save :size="16" />{{ $t('common.save') }}</button>
           </div>
         </form>

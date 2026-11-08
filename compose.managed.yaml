@@ -1,0 +1,35 @@
+services:
+  app:
+    ports: !override
+      - "${LIBREFANZA_BIND_ADDRESS:-127.0.0.1}:${LIBREFANZA_PORT:-8080}:8080"
+    environment:
+      LIBREFANZA_MANAGED_DB_HOST: postgres
+      LIBREFANZA_MANAGED_DB_NAME: ${DB_NAME:-librefanza}
+      LIBREFANZA_MANAGED_DB_USER: ${DB_USER:-librefanza}
+      LIBREFANZA_MANAGED_DB_PASSWORD: ${DB_PASSWORD:?请设置数据库密码}
+      LIBREFANZA_MANAGED_GORSE: "true"
+      GORSE_ENTRY_POINT: http://gorse:8088
+      GORSE_API_KEY: ${GORSE_API_KEY:?请设置推荐服务密钥}
+
+  gorse:
+    build:
+      context: .
+      dockerfile: docker/Gorse.Dockerfile
+    init: true
+    environment:
+      DB_HOST: postgres
+      DB_NAME: ${DB_NAME:-librefanza}
+      DB_USER: ${DB_USER:-librefanza}
+      DB_PASSWORD: ${DB_PASSWORD:?请设置数据库密码}
+      GORSE_SERVER_API_KEY: ${GORSE_API_KEY:?请设置推荐服务密钥}
+    volumes:
+      - gorse-data:/var/lib/gorse
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  gorse-data:

@@ -80,6 +80,7 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 			respondError(c, http.StatusInternalServerError, "internal_error")
 			return
 		}
+		svc.RecordFeedback(c.Request.Context(), "annotation", input.Action, stats)
 		c.JSON(http.StatusOK, gin.H{
 			"data": gin.H{
 				"success":    true,
@@ -162,6 +163,7 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 			respondError(c, http.StatusInternalServerError, "internal_error")
 			return
 		}
+		svc.RecordFeedback(c.Request.Context(), "recommendation", input.Action, stats)
 		c.JSON(http.StatusOK, gin.H{
 			"data": gin.H{
 				"success":    true,
