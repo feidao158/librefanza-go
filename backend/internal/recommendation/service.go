@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	ErrInvalidAction = errors.New("invalid feedback action")
-	ErrMovieNotFound = errors.New("movie not found")
+	ErrInvalidAction    = errors.New("invalid feedback action")
+	ErrMovieNotFound    = errors.New("movie not found")
+	ErrGorseUnavailable = errors.New("recommendation service unavailable")
 )
 
 // Service 推荐与人工标注服务
@@ -96,6 +97,38 @@ func (s *Service) GetStats(ctx context.Context, userID string) (Stats, error) {
 		MinRequired: minRequired,
 		Ready:       profile.FeedbackCount >= minRequired,
 	}, nil
+}
+
+// GetLikedMovies 按最近标注时间读取当前用户喜欢的可见作品。
+func (s *Service) GetLikedMovies(ctx context.Context, userID string, page, pageSize int) ([]catalog.Movie, int64, error) {
+	visible := s.db.WithContext(ctx).Model(&catalog.Movie{}).Select("normalized_id").Where("is_hidden = ?", false)
+	query := s.db.WithContext(ctx).Model(&UserFeedback{}).Where("user_id = ? AND feedback_type = ?", userID, "like").Where("normalized_id IN (?)", visible)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var feedbacks []UserFeedback
+	if err := query.Order("updated_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&feedbacks).Error; err != nil {
+		return nil, 0, err
+	}
+	if len(feedbacks) == 0 {
+		return []catalog.Movie{}, total, nil
+	}
+	ids := make([]string, 0, len(feedbacks))
+	order := make(map[string]int, len(feedbacks))
+	for i, feedback := range feedbacks {
+		ids = append(ids, feedback.NormalizedID)
+		order[feedback.NormalizedID] = i
+	}
+	var movies []catalog.Movie
+	if err := s.db.WithContext(ctx).Where("normalized_id IN ? AND is_hidden = ?", ids, false).Find(&movies).Error; err != nil {
+		return nil, 0, err
+	}
+	sort.Slice(movies, func(i, j int) bool { return order[movies[i].NormalizedID] < order[movies[j].NormalizedID] })
+	if err := s.catalogRepo.Populate(ctx, movies, false); err != nil {
+		return nil, 0, err
+	}
+	return movies, total, nil
 }
 
 // GetNextAnnotation 随机拉取一部未标注的番号供用户人工标注
@@ -523,7 +556,7 @@ func (s *Service) syncToGorse(ctx context.Context, userID string, movie catalog.
 	_, _ = client.InsertFeedback(syncCtx, []gorse.Feedback{feedback})
 }
 
-// GetRecommendations 猜你喜欢：优先从 Gorse 提取推荐，如未生效或冷启动则基于保存的参数计算推荐
+// GetRecommendations 从 Gorse 获取推荐并保留其排序。
 func (s *Service) GetRecommendations(ctx context.Context, userID string, page, pageSize int) (result []catalog.Movie, resultStats Stats, total int64, resultErr error) {
 	started := time.Now()
 	details := logbook.RecommendationDetails{Gorse: "disabled"}
@@ -564,24 +597,27 @@ func (s *Service) GetRecommendations(ctx context.Context, userID string, page, p
 		ratedMap[f.NormalizedID] = f.FeedbackType
 	}
 
-	// 1. 尝试从 Gorse 推荐系统获取
+	// 仅使用推荐服务产生的结果。
 	client, _, enabled := s.getGorseClient(ctx)
 	var gorseMovies []catalog.Movie
 	gorseUserID := userID
 	if enabled && os.Getenv("LIBREFANZA_MANAGED_GORSE") == "true" {
 		progress, err := ManagedSyncStatus(ctx, s.db)
 		if err != nil || !progress.Ready {
-			enabled = false
 			details.Gorse = "syncing"
+			return nil, stats, 0, ErrGorseUnavailable
 		} else {
 			healthy, healthErr := ManagedSyncHealthy(ctx, s.db)
 			if healthErr != nil || !healthy {
-				enabled = false
 				details.Gorse = "error"
+				return nil, stats, 0, ErrGorseUnavailable
 			} else {
 				gorseUserID = managedUserID(userID)
 			}
 		}
+	}
+	if !enabled || client == nil {
+		return nil, stats, 0, ErrGorseUnavailable
 	}
 	if enabled && client != nil {
 		gorseCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -590,6 +626,7 @@ func (s *Service) GetRecommendations(ctx context.Context, userID string, page, p
 		details.Gorse = "empty"
 		if err != nil {
 			details.Gorse = "error"
+			return nil, stats, 0, ErrGorseUnavailable
 		}
 		if err == nil && len(recommendIDs) > 0 {
 			// 排除全部已标注作品并按推荐顺序去重。
@@ -620,254 +657,21 @@ func (s *Service) GetRecommendations(ctx context.Context, userID string, page, p
 		}
 	}
 
-	// 2. Fallback：使用保存的偏好参数生成推荐
-	if len(gorseMovies) == 0 {
-		details.Algorithm = "local"
-	}
-	var profile UserRecommendationProfile
-	_ = s.db.WithContext(ctx).Where("user_id = ?", userID).First(&profile).Error
-	var params PreferenceParameters
-	if profile.ParametersJSON != "" && profile.ParametersJSON != "{}" {
-		_ = json.Unmarshal([]byte(profile.ParametersJSON), &params)
-	}
-
-	// 抽取候选影片（排除用户已标注的影片）
-	query := s.db.WithContext(ctx).Model(&catalog.Movie{}).Where("is_hidden = ?", false)
-	ratedQuery := s.db.WithContext(ctx).Model(&UserFeedback{}).Select("normalized_id").Where("user_id = ?", userID)
-	query = query.Where("normalized_id NOT IN (?)", ratedQuery)
-
-	var candidates []catalog.Movie
-	// 近期候选与偏好演员候选合并，避免旧作品完全无法进入排序。
-	if err := query.Order("release_date DESC, normalized_id ASC").Limit(1000).Find(&candidates).Error; err != nil {
-		return nil, stats, 0, err
-	}
-	var preferredActresses []string
-	for actress, weight := range params.Actresses {
-		if weight > 0 {
-			preferredActresses = append(preferredActresses, actress)
-		}
-	}
-	sort.Strings(preferredActresses)
-	seenCandidates := make(map[uint64]bool, len(candidates))
-	for _, movie := range candidates {
-		seenCandidates[movie.ID] = true
-	}
-	for start := 0; start < len(preferredActresses); start += 200 {
-		end := min(start+200, len(preferredActresses))
-		var ids []uint64
-		if err := s.db.WithContext(ctx).Table("movie_cast").Distinct("movie_id").Where("name IN ?", preferredActresses[start:end]).Order("movie_id DESC").Limit(1000).Pluck("movie_id", &ids).Error; err != nil {
-			return nil, stats, 0, err
-		}
-		if len(ids) == 0 {
-			continue
-		}
-		var matches []catalog.Movie
-		if err := query.Session(&gorm.Session{}).Where("id IN ?", ids).Order("release_date DESC, normalized_id ASC").Find(&matches).Error; err != nil {
-			return nil, stats, 0, err
-		}
-		for _, movie := range matches {
-			if !seenCandidates[movie.ID] {
-				seenCandidates[movie.ID] = true
-				candidates = append(candidates, movie)
-				if len(candidates) >= 2000 {
-					break
-				}
-			}
-		}
-		if len(candidates) >= 2000 {
-			break
-		}
-	}
-	for _, movie := range gorseMovies {
-		if !seenCandidates[movie.ID] {
-			seenCandidates[movie.ID] = true
-			candidates = append(candidates, movie)
-		}
-	}
-	if len(candidates) == 0 && len(gorseMovies) == 0 {
-		return []catalog.Movie{}, stats, 0, nil
-	}
-
-	// 批量加载候选影片的分类与演员
-	candidateIDs := make([]string, 0, len(candidates))
-	for _, m := range candidates {
-		candidateIDs = append(candidateIDs, m.NormalizedID)
-	}
-
-	type metaItem struct {
-		NormalizedID string
-		MetadataJSON string
-	}
-	var metaItems []metaItem
-	for start := 0; start < len(candidateIDs); start += 500 {
-		var batch []metaItem
-		if err := s.db.WithContext(ctx).Table("source_items").Select("normalized_id, metadata_json").Where("normalized_id IN ?", candidateIDs[start:min(start+500, len(candidateIDs))]).Find(&batch).Error; err != nil {
-			return nil, stats, 0, err
-		}
-		metaItems = append(metaItems, batch...)
-	}
-
-	itemMetaMap := make(map[string][]string, len(candidateIDs)) // normalized_id -> metadata_jsons
-	for _, item := range metaItems {
-		if item.MetadataJSON != "" {
-			itemMetaMap[item.NormalizedID] = append(itemMetaMap[item.NormalizedID], item.MetadataJSON)
-		}
-	}
-
-	type castItem struct {
-		MovieID uint64
-		Name    string
-	}
-	movieIDList := make([]uint64, 0, len(candidates))
-	for _, m := range candidates {
-		movieIDList = append(movieIDList, m.ID)
-	}
-	var castItems []castItem
-	for start := 0; start < len(movieIDList); start += 500 {
-		var batch []castItem
-		if err := s.db.WithContext(ctx).Table("movie_cast").Select("movie_id, name").Where("movie_id IN ?", movieIDList[start:min(start+500, len(movieIDList))]).Find(&batch).Error; err != nil {
-			return nil, stats, 0, err
-		}
-		castItems = append(castItems, batch...)
-	}
-
-	castMap := make(map[uint64][]string, len(movieIDList))
-	for _, c := range castItems {
-		if c.Name != "" {
-			castMap[c.MovieID] = append(castMap[c.MovieID], c.Name)
-		}
-	}
-
-	type scoredMovie struct {
-		movie catalog.Movie
-		score float64
-	}
-	scored := make([]scoredMovie, len(candidates))
-
-	for i, m := range candidates {
-		score := 0.0
-		seen := make(map[string]bool)
-		// 演员权重
-		for _, actress := range castMap[m.ID] {
-			actress = strings.TrimSpace(actress)
-			if seen["a:"+actress] {
-				continue
-			}
-			seen["a:"+actress] = true
-			if w, ok := params.Actresses[actress]; ok {
-				score += w * 2.5
-			}
-		}
-
-		// 分类、厂牌、导演权重
-		for _, rawJSON := range itemMetaMap[m.NormalizedID] {
-			var meta struct {
-				Genres    []string `json:"genres"`
-				Makers    []string `json:"makers"`
-				Labels    []string `json:"labels"`
-				Directors []string `json:"directors"`
-			}
-			if json.Unmarshal([]byte(rawJSON), &meta) == nil {
-				for _, g := range meta.Genres {
-					g = strings.TrimSpace(g)
-					if seen["g:"+g] {
-						continue
-					}
-					seen["g:"+g] = true
-					if w, ok := params.Genres[g]; ok {
-						score += w * 1.5
-					}
-				}
-				for _, mk := range meta.Makers {
-					mk = strings.TrimSpace(mk)
-					if seen["m:"+mk] {
-						continue
-					}
-					seen["m:"+mk] = true
-					if w, ok := params.Makers[mk]; ok {
-						score += w * 1.0
-					}
-				}
-				for _, l := range meta.Labels {
-					l = strings.TrimSpace(l)
-					if seen["l:"+l] {
-						continue
-					}
-					seen["l:"+l] = true
-					if w, ok := params.Labels[l]; ok {
-						score += w * 0.8
-					}
-				}
-				for _, d := range meta.Directors {
-					d = strings.TrimSpace(d)
-					if seen["d:"+d] {
-						continue
-					}
-					seen["d:"+d] = true
-					if w, ok := params.Directors[d]; ok {
-						score += w * 0.8
-					}
-				}
-			}
-		}
-
-		// 发布日期微加分（近期新片加分）
-		if m.ReleaseDate != nil && time.Since(*m.ReleaseDate) < 180*24*time.Hour {
-			score += 0.5
-		}
-
-		scored[i] = scoredMovie{movie: m, score: score}
-	}
-
-	// 按照打分降序排列
-	sort.SliceStable(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
-		}
-		left, right := scored[i].movie.ReleaseDate, scored[j].movie.ReleaseDate
-		if left != nil && right != nil && !left.Equal(*right) {
-			return left.After(*right)
-		}
-		if (left == nil) != (right == nil) {
-			return left != nil
-		}
-		return scored[i].movie.NormalizedID < scored[j].movie.NormalizedID
-	})
-
-	// 两路候选统一去重分页，避免补足结果在后续页重复出现。
-	scores := make(map[string]float64, len(scored))
-	for _, item := range scored {
-		scores[item.movie.NormalizedID] = item.score
-	}
-	sort.SliceStable(gorseMovies, func(i, j int) bool {
-		return scores[gorseMovies[i].NormalizedID] > scores[gorseMovies[j].NormalizedID]
-	})
-	combined := make([]catalog.Movie, 0, len(gorseMovies)+len(scored))
-	seenIDs := make(map[string]bool, len(gorseMovies)+len(scored))
-	for _, movie := range gorseMovies {
-		combined = append(combined, movie)
-		seenIDs[movie.NormalizedID] = true
-	}
-	for _, item := range scored {
-		if !seenIDs[item.movie.NormalizedID] {
-			combined = append(combined, item.movie)
-			seenIDs[item.movie.NormalizedID] = true
-		}
-	}
-	details.Candidates = len(combined)
-	offset := (page - 1) * pageSize
-	totalCandidates := int64(len(combined))
-	if offset >= len(combined) {
+	details.Algorithm = "gorse"
+	details.Candidates = len(gorseMovies)
+	totalCandidates := int64(len(gorseMovies))
+	if page > len(gorseMovies)/pageSize+1 {
 		return []catalog.Movie{}, stats, totalCandidates, nil
 	}
-	end := min(offset+pageSize, len(combined))
-	resultMovies := combined[offset:end]
-
-	if err := s.catalogRepo.Populate(ctx, resultMovies, false); err != nil {
+	offset := (page - 1) * pageSize
+	if offset >= len(gorseMovies) {
+		return []catalog.Movie{}, stats, totalCandidates, nil
+	}
+	movies := gorseMovies[offset:min(offset+pageSize, len(gorseMovies))]
+	if err := s.catalogRepo.Populate(ctx, movies, false); err != nil {
 		return nil, stats, 0, err
 	}
-
-	return resultMovies, stats, totalCandidates, nil
+	return movies, stats, totalCandidates, nil
 }
 
 // RecordFeedback 记录不含用户或影片标识的反馈汇总。

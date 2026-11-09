@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Calendar } from 'lucide-vue-next'
 import type { Movie } from '../types'
 
-const props = defineProps<{ movie: Movie }>()
+const props = defineProps<{ movie: Movie; likesPage?: number }>()
 const imageFailed = ref(false)
 const imageLoaded = ref(false)
 const imageIndex = ref(0)
@@ -28,7 +28,7 @@ function onImageError() {
 </script>
 
 <template>
-  <RouterLink class="movie-card" :to="`/movies/${encodeURIComponent(movie.normalized_id)}`">
+  <RouterLink class="movie-card" :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}`, query: likesPage ? { from: 'likes', likes_page: likesPage } : {} }">
     <div class="movie-cover">
       <span v-if="!imageLoaded" class="cover-placeholder">{{ $t(!imageFailed && imageURL ? 'movies.loadingCover' : 'movies.noCover') }}</span>
       <img

@@ -71,6 +71,9 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 	if err := migrateSourceBackfillJobs(context.Background(), db); err != nil {
 		return nil, err
 	}
+	if err := migrateCrawlJobs(context.Background(), db); err != nil {
+		return nil, err
+	}
 	queue := jobs.New(storage)
 	manager := &Manager{db: db, storage: storage, queue: queue, logs: logbook.New(db, os.Stdout)}
 	queue.UseExecutionMiddleware(manager.logExecution)
@@ -104,6 +107,7 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 	})
 	options := []jobs.WorkerOption{
 		jobs.WorkerQueue("default", jobs.Concurrency(4)),
+		jobs.WorkerQueue("crawl", jobs.Concurrency(4)),
 		jobs.WorkerQueue("metadata", jobs.Concurrency(1)),
 		jobs.WorkerQueue("backfill", jobs.Concurrency(1)),
 		jobs.WorkerQueue("source_backfill", jobs.Concurrency(1)),
@@ -116,6 +120,10 @@ func newManager(db *gorm.DB, search SearchFunc, overrides ...jobs.WorkerOption) 
 	worker := jobs.NewWorker(queue, append(options, overrides...)...)
 	manager.worker = worker
 	return manager, nil
+}
+
+func migrateCrawlJobs(ctx context.Context, db *gorm.DB) error {
+	return db.WithContext(ctx).Table("jobs").Where("queue = ? AND type = ? AND status IN ?", "default", "source_crawl", []string{"pending", "retrying", "waiting", "paused"}).Update("queue", "crawl").Error
 }
 
 func migrateSourceBackfillJobs(ctx context.Context, db *gorm.DB) error {

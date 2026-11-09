@@ -89,6 +89,42 @@ func TestSaveUpdatesPreferredMovieAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestConcurrentSourcesPreserveVersions(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprintf("PARALLEL-%d", time.Now().UnixNano())
+	defer db.Where("normalized_id = ?", id).Delete(&catalog.Movie{})
+	defer db.Where("normalized_id = ?", id).Delete(&catalog.SourceItem{})
+	results := make(chan error, 3)
+	for _, name := range []string{"sod", "fanza", "mgstage"} {
+		name := name
+		go func() {
+			results <- NewService(db).Save(context.Background(), sources.Parsed{Item: catalog.SourceItem{Source: name, ExternalID: id, NormalizedID: id, Title: name}})
+		}()
+	}
+	for i := 0; i < 3; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	movie, err := catalog.NewRepository(db).Movie(context.Background(), id)
+	if err != nil || len(movie.Versions) != 3 {
+		t.Fatalf("并发保存丢失来源: %+v %v", movie, err)
+	}
+}
+
 func TestRepairedCoverSurvivesLaterSourceUpdate(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {

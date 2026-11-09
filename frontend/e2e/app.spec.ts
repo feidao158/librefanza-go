@@ -1,5 +1,23 @@
 import { expect, test } from '@playwright/test'
 
+test('管理员查看数据面板并访问喜欢列表', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'admin-token'))
+  await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
+  await page.route('**/api/v1/auth/me', route => route.fulfill({ json: { data: { id: 1, email: 'admin@example.com', is_admin: true } } }))
+  await page.route('**/api/v1/admin/dashboard', route => route.fulfill({ json: { data: { movies: 1234, source_items: 2345, errors_24h: 3, queues: [{ queue: 'metadata', status: 'pending', count: 42 }] } } }))
+  await page.route('**/api/v1/annotations/likes?*', route => route.fulfill({ json: { data: [{ id: 1, normalized_id: 'LIKE-001', preferred_item: { id: 1, source: 'fanza', title: '喜欢的作品' } }], meta: { page: 1, page_size: 30, total: 1 } } }))
+  await page.goto('/admin/dashboard')
+  await expect(page.getByRole('heading', { name: '数据面板' })).toBeVisible()
+  await expect(page.getByText('1,234')).toBeVisible()
+  await expect(page.getByText('42', { exact: true })).toBeVisible()
+  const likesLink = page.getByRole('link', { name: '喜欢过' }).first()
+  await likesLink.focus()
+  await likesLink.press('Enter')
+  await expect(page.getByText('LIKE-001')).toBeVisible()
+  await expect(page.getByText('喜欢的作品')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+})
+
 test('首次访问可选择数据库、跳过 Redis 并填写管理员', async ({ page }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: false } } }))
   await page.goto('/')
@@ -14,7 +32,7 @@ test('首次访问可选择数据库、跳过 Redis 并填写管理员', async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 })
 
-test('安装向导提交 MySQL、可选 Redis 和管理员配置', async ({ page }) => {
+test('安装向导提交 PostgreSQL、可选 Redis 和管理员配置', async ({ page }) => {
   let installed = false
   let databaseChecked = false
   let redisChecked = false
@@ -25,7 +43,6 @@ test('安装向导提交 MySQL、可选 Redis 和管理员配置', async ({ page
   await page.route('**/api/v1/setup/installations', route => { request = route.request().postDataJSON(); installed = true; return route.fulfill({ status: 201, json: { data: { installed: true } } }) })
   await page.route('**/api/v1/movies?*', route => route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } }))
   await page.goto('/')
-  await page.getByLabel('数据库类型').selectOption('mysql')
   await page.getByLabel('用户名').fill('app')
   await page.getByRole('button', { name: '测试连接' }).click()
   await expect.poll(() => databaseChecked).toBe(true)
@@ -37,7 +54,7 @@ test('安装向导提交 MySQL、可选 Redis 和管理员配置', async ({ page
   await page.getByLabel('电子邮箱').fill('admin@example.com')
   await page.getByLabel('密码').fill('test-password')
   await page.getByRole('button', { name: '完成安装' }).click()
-  await expect.poll(() => request).toMatchObject({ database: { driver: 'mysql', port: 3306, user: 'app' }, redis: { enabled: true }, email: 'admin@example.com' })
+  await expect.poll(() => request).toMatchObject({ database: { driver: 'postgres', port: 5432, user: 'app' }, redis: { enabled: true }, email: 'admin@example.com' })
   await expect(page.getByRole('heading', { name: '影片' })).toBeVisible()
 })
 

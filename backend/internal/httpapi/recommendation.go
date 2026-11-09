@@ -107,6 +107,21 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 		})
 	})
 
+	// 读取当前用户喜欢的作品。
+	api.GET("/annotations/likes", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		page, size := pageParams(c)
+		movies, total, err := svc.GetLikedMovies(c.Request.Context(), resolveID(c), page, size)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": movies, "meta": gin.H{"page": page, "page_size": size, "total": total}})
+	})
+
 	// GET /api/v1/recommendations 猜你喜欢：获取个性化推荐结果
 	api.GET("/recommendations", func(c *gin.Context) {
 		svc := service(c)
@@ -117,6 +132,10 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 		userID := resolveID(c)
 		movies, stats, total, err := svc.GetRecommendations(c.Request.Context(), userID, page, size)
 		if err != nil {
+			if errors.Is(err, recommendation.ErrGorseUnavailable) {
+				respondError(c, http.StatusServiceUnavailable, "recommendation_unavailable")
+				return
+			}
 			respondError(c, http.StatusInternalServerError, "internal_error")
 			return
 		}

@@ -151,25 +151,34 @@ func TestRecommendationAPIWorkflow(t *testing.T) {
 		t.Fatalf("submit feedback 5: %d %s", postRec5.Code, postRec5.Body.String())
 	}
 
-	// 5. 再次查询猜你喜欢接口，应返回 ready=true 并且产生推荐结果
+	// 5. 未配置推荐服务时明确报告不可用。
 	recReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/recommendations", nil)
 	recReq2.Header.Set("X-Client-ID", clientID)
 	recRecorder2 := httptest.NewRecorder()
 	router.ServeHTTP(recRecorder2, recReq2)
-	if recRecorder2.Code != http.StatusOK {
+	if recRecorder2.Code != http.StatusServiceUnavailable || !strings.Contains(recRecorder2.Body.String(), "recommendation_unavailable") {
 		t.Fatalf("get recommendations 2: %d %s", recRecorder2.Code, recRecorder2.Body.String())
 	}
-	var recsResp2 struct {
-		Data struct {
-			Ready  bool            `json:"ready"`
-			Movies []catalog.Movie `json:"movies"`
-		} `json:"data"`
+
+	likesReq := httptest.NewRequest(http.MethodGet, "/api/v1/annotations/likes?page=1&page_size=1", nil)
+	likesReq.Header.Set("X-Client-ID", clientID)
+	likesRec := httptest.NewRecorder()
+	router.ServeHTTP(likesRec, likesReq)
+	var likes struct {
+		Data []catalog.Movie `json:"data"`
+		Meta struct {
+			Total int `json:"total"`
+		} `json:"meta"`
 	}
-	if err := json.Unmarshal(recRecorder2.Body.Bytes(), &recsResp2); err != nil {
-		t.Fatal(err)
+	if likesRec.Code != http.StatusOK || json.Unmarshal(likesRec.Body.Bytes(), &likes) != nil || likes.Meta.Total != 2 || len(likes.Data) != 1 || likes.Data[0].NormalizedID != movieIDs[2] {
+		t.Fatalf("喜欢列表及分页不正确: %d %s", likesRec.Code, likesRec.Body.String())
 	}
-	if !recsResp2.Data.Ready {
-		t.Fatalf("recommendations should be ready now: %+v", recsResp2.Data)
+	otherReq := httptest.NewRequest(http.MethodGet, "/api/v1/annotations/likes", nil)
+	otherReq.Header.Set("X-Client-ID", clientID+"-other")
+	otherRec := httptest.NewRecorder()
+	router.ServeHTTP(otherRec, otherReq)
+	if otherRec.Code != http.StatusOK || strings.Contains(otherRec.Body.String(), movieIDs[0]) {
+		t.Fatalf("喜欢列表不得泄漏其他用户数据: %d %s", otherRec.Code, otherRec.Body.String())
 	}
 
 	// 6. 在猜你喜欢页面提交交互反馈

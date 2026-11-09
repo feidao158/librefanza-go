@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { Check, Database, LockKeyhole, Server, ShieldCheck } from 'lucide-vue-next'
 import { api, jsonBody } from '../api/client'
 
@@ -22,8 +22,6 @@ onMounted(async () => {
     if (managed.value) step.value = 3
   } catch { error.value = true } finally { checkingSetup.value = false }
 })
-
-watch(() => database.driver, (value) => { database.port = value === 'mysql' ? 3306 : 5432; checked.value = '' })
 
 async function testConnection(kind: 'database' | 'redis') {
   busy.value = true
@@ -53,7 +51,7 @@ async function finish() {
     <div v-if="checkingSetup" class="center-state">{{ $t('common.loading') }}</div>
     <form v-else-if="step === 1" class="setup-form" @submit.prevent="step = 2; error = false; checked = ''">
       <h2>{{ $t('setup.database') }}</h2>
-      <label class="field"><span>{{ $t('setup.driver') }}</span><select v-model="database.driver" class="select"><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option></select></label>
+      <label class="field"><span>{{ $t('setup.driver') }}</span><input class="input" value="PostgreSQL" readonly></label>
       <div class="field-grid"><label class="field"><span>{{ $t('setup.host') }}</span><input v-model="database.host" class="input" required></label><label class="field"><span>{{ $t('setup.port') }}</span><input v-model.number="database.port" class="input" type="number" min="1" max="65535" required></label></div>
       <label class="field"><span>{{ $t('setup.name') }}</span><input v-model="database.name" class="input" required></label>
       <div class="field-grid"><label class="field"><span>{{ $t('setup.user') }}</span><input v-model="database.user" class="input" autocomplete="username" required></label><label class="field"><span>{{ $t('setup.password') }}</span><input v-model="database.password" class="input" type="password" autocomplete="new-password"></label></div>

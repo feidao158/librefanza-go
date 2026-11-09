@@ -65,6 +65,19 @@ func TestAdminCanImportJavlibraryPage(t *testing.T) {
 	if public.Code != http.StatusOK || !bytes.Contains(public.Body.Bytes(), []byte("Test title")) {
 		t.Fatalf("movie: %d %s", public.Code, public.Body.String())
 	}
+	dashboard := httptest.NewRequest(http.MethodGet, "/api/v1/admin/dashboard", nil)
+	dashboard.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	dashboardResponse := httptest.NewRecorder()
+	router.ServeHTTP(dashboardResponse, dashboard)
+	var summary struct {
+		Data struct {
+			Movies      int `json:"movies"`
+			SourceItems int `json:"source_items"`
+		} `json:"data"`
+	}
+	if dashboardResponse.Code != http.StatusOK || json.Unmarshal(dashboardResponse.Body.Bytes(), &summary) != nil || summary.Data.Movies < 1 || summary.Data.SourceItems < 1 {
+		t.Fatalf("数据面板统计不正确: %d %s", dashboardResponse.Code, dashboardResponse.Body.String())
+	}
 }
 
 func TestAdminJobsRequireAuthentication(t *testing.T) {
@@ -74,6 +87,16 @@ func TestAdminJobsRequireAuthentication(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/admin/jobs", nil))
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("jobs: %d", response.Code)
+	}
+}
+
+func TestDashboardRequiresAuthentication(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	router := NewRouter(setup.NewService(store, setupBackend{}), database.NewProvider(store))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/admin/dashboard", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("dashboard: %d", response.Code)
 	}
 }
 

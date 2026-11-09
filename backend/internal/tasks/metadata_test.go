@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/catalog"
 	"github.com/libredmm/librefanza/backend/internal/config"
 	"github.com/libredmm/librefanza/backend/internal/database"
+	"github.com/libredmm/librefanza/backend/internal/logbook"
 )
 
 func TestMetadataEnrichmentContinuesAndResumesFailedSources(t *testing.T) {
@@ -39,7 +42,10 @@ func TestMetadataEnrichmentContinuesAndResumesFailedSources(t *testing.T) {
 	movieID := fmt.Sprintf("RETRY-%d", time.Now().UnixNano())
 	defer db.Where("job_id = ?", jobID).Delete(&MetadataSourceProgress{})
 	calls := map[string]int{}
+	var callsMu sync.Mutex
 	run := func(_ context.Context, _, source string) (bool, error) {
+		callsMu.Lock()
+		defer callsMu.Unlock()
 		calls[source]++
 		if source == "fanza" && calls[source] == 1 {
 			return false, errors.New("source unavailable")
@@ -58,6 +64,87 @@ func TestMetadataEnrichmentContinuesAndResumesFailedSources(t *testing.T) {
 	}
 	if calls["fanza"] != 2 || calls["sod"] != 1 {
 		t.Fatalf("unexpected retry calls: %v", calls)
+	}
+}
+
+func TestMetadataEnrichmentPanicIsContained(t *testing.T) {
+	if os.Getenv("LIBREFANZA_TEST_DB_DRIVER") == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	if os.Getenv("LIBREFANZA_TEST_PANIC_CHILD") == "" {
+		command := exec.Command(os.Args[0], "-test.run=^TestMetadataEnrichmentPanicIsContained$")
+		command.Env = append(os.Environ(), "LIBREFANZA_TEST_PANIC_CHILD=1")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("采集异常导致进程退出: %s", output)
+		}
+		return
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: "postgres", Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	manager, err := NewManager(db, func(context.Context, string) (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = manager.runEnrichment(context.Background(), "panic-test", "", []string{"fanza"}, func(context.Context, string, string) (bool, error) { panic("test panic") })
+	if !errors.Is(err, logbook.ErrTaskPanic) {
+		t.Fatalf("异常未转换为任务错误: %v", err)
+	}
+}
+
+func TestMetadataEnrichmentRunsDifferentSourcesConcurrently(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(db, func(context.Context, string) (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := fmt.Sprintf("parallel-%d", time.Now().UnixNano())
+	defer db.Where("job_id = ?", job).Delete(&MetadataSourceProgress{})
+	entered := make(chan struct{}, 3)
+	release := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- manager.runEnrichment(ctx, job, "", []string{"fanza", "sod", "fc2"}, func(ctx context.Context, _, _ string) (bool, error) {
+			entered <- struct{}{}
+			select {
+			case <-release:
+				return true, nil
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
+		})
+	}()
+	for i := 0; i < 3; i++ {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			close(release)
+			<-done
+			t.Fatal("不同来源未并发执行")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

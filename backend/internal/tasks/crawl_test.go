@@ -18,6 +18,129 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/sources"
 )
 
+func TestCrawlQueueDoesNotBlockDefaultJobs(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(db, func(context.Context, string) (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{}, 4)
+	manager.ConfigureCrawls(func(ctx context.Context, _ sources.CrawlRequest, _ sources.CrawlProgress, _ func(sources.CrawlProgress) error) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	var ids []string
+	defer func() {
+		for _, id := range ids {
+			jobID, _ := jobs.ParseUUID(id)
+			db.Where("job_id = ?", id).Delete(&CrawlProgress{})
+			db.Where("task_id = ?", id).Delete(&logbook.Entry{})
+			db.Where("id = ?", jobID).Delete(&jobs.Job{})
+		}
+	}()
+	for _, source := range []string{"libredmm", "javdb", "javbooks", "javquery"} {
+		id, err := manager.EnqueueCrawl(context.Background(), sources.CrawlRequest{Source: source, Mode: "full"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		jobID, _ := jobs.ParseUUID(id)
+		var job jobs.Job
+		if err := db.Where("id = ?", jobID).First(&job).Error; err != nil || job.Queue != "crawl" {
+			t.Fatalf("采集任务应进入独立队列: 队列=%s 错误=%v", job.Queue, err)
+		}
+	}
+	done := make(chan struct{}, 1)
+	manager.queue.Register("test_default_unblocked", func(context.Context, struct{}) error { done <- struct{}{}; return nil })
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	for range 4 {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("采集任务未并发启动")
+		}
+	}
+	jobID, err := manager.queue.Enqueue(context.Background(), "test_default_unblocked", struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Where("id = ?", jobID).Delete(&jobs.Job{})
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("默认任务被采集阻塞")
+	}
+}
+
+func TestPendingLegacyCrawlsMoveToDedicatedQueue(t *testing.T) {
+	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
+	if driver == "" {
+		t.Skip("需要设置测试数据库连接")
+	}
+	port, _ := strconv.Atoi(os.Getenv("LIBREFANZA_TEST_DB_PORT"))
+	db, err := database.Open(context.Background(), config.Database{Driver: driver, Host: "127.0.0.1", Port: port, Name: "librefanza_test", User: "test", Password: "integration-test-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := database.Migrate(context.Background(), db, driver); err != nil {
+		t.Fatal(err)
+	}
+	old, err := NewManager(db, func(context.Context, string) (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.ConfigureCrawls(func(context.Context, sources.CrawlRequest, sources.CrawlProgress, func(sources.CrawlProgress) error) error {
+		return nil
+	})
+	var ids []string
+	defer func() {
+		for _, id := range ids {
+			jobID, _ := jobs.ParseUUID(id)
+			db.Where("id = ?", jobID).Delete(&jobs.Job{})
+		}
+	}()
+	for _, source := range []string{"libredmm", "javdb"} {
+		id, err := old.queue.Enqueue(context.Background(), "source_crawl", sources.CrawlRequest{Source: source, Mode: "full"}, jobs.QueueOpt("default"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id.String())
+	}
+	runningID, _ := jobs.ParseUUID(ids[1])
+	if err := db.Model(&jobs.Job{}).Where("id = ?", runningID).Update("status", "running").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewManager(db, func(context.Context, string) (bool, error) { return false, nil }); err != nil {
+		t.Fatal(err)
+	}
+	for i, expected := range []string{"crawl", "default"} {
+		jobID, _ := jobs.ParseUUID(ids[i])
+		var job jobs.Job
+		if err := db.Where("id = ?", jobID).First(&job).Error; err != nil || job.Queue != expected {
+			t.Fatalf("旧任务迁移错误: 队列=%s 期望=%s 错误=%v", job.Queue, expected, err)
+		}
+	}
+}
+
 func TestCrawlJobDeduplicationAndRetryProgress(t *testing.T) {
 	driver := os.Getenv("LIBREFANZA_TEST_DB_DRIVER")
 	if driver == "" {

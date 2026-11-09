@@ -70,7 +70,7 @@ func (m *Manager) EnqueueCrawl(ctx context.Context, request sources.CrawlRequest
 		return "", err
 	}
 	key := "source_crawl:" + request.Source
-	id, err := m.queue.Enqueue(ctx, "source_crawl", request, jobs.Unique(key), jobs.Retries(100), jobs.Timeout(30*24*time.Hour))
+	id, err := m.queue.Enqueue(ctx, "source_crawl", request, jobs.QueueOpt("crawl"), jobs.Unique(key), jobs.Retries(100), jobs.Timeout(30*24*time.Hour))
 	if errors.Is(err, jobs.ErrDuplicateJob) {
 		var existing jobs.Job
 		if err := m.db.WithContext(ctx).Where("unique_key = ? AND status IN ?", key, []string{"pending", "running", "retrying", "waiting", "paused"}).Order("created_at DESC").First(&existing).Error; err != nil {

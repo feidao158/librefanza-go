@@ -1,10 +1,10 @@
 # LibreFanza
 
-Go 后端提供版本化 REST API、初始化向导与数据库持久化任务；Vue 3 前端使用 TypeScript、Tailwind CSS 和 daisyUI。支持 MySQL 8.0+、PostgreSQL 14+，Redis 仅作为可选缓存，不参与认证和任务队列。
+Go 后端提供版本化 REST API、初始化向导与数据库持久化任务；Vue 3 前端使用 TypeScript、Tailwind CSS 和 daisyUI。数据库仅支持 PostgreSQL 14+，Redis 仅作为可选缓存，不参与认证和任务队列。本版本不支持直接连接旧版 MySQL 数据库，也不提供自动迁移。
 
 ## 本地开发
 
-依赖 Go 1.27+、Node.js 24+ 和一个已创建的 MySQL 或 PostgreSQL 数据库。数据库用户必须拥有目标数据库的建表和修改权限。首次安装不会清空已有表；请使用专用空数据库。
+依赖 Go 1.27+、Node.js 24+ 和一个已创建的 PostgreSQL 数据库。数据库用户必须拥有目标数据库的建表和修改权限。首次安装不会清空已有表；请使用专用空数据库。
 
 ```bash
 cd frontend
@@ -34,20 +34,19 @@ go run ./cmd/server
 
 首次启动自动生成私有 `.env.librefanza-managed`；不要删除或公开该文件，备份时应与 `app-data`、`postgres-data` 和 `gorse-data` 卷一起保留。页面只需设置管理员账号和密码，也可以选择外部数据库。服务默认只绑定本机，初始化之前不要暴露到公网；初始化后如需对外访问，应配置 HTTPS 反向代理。已使用 `.env` 的环境会继续使用其中的数据库配置，启动脚本不会改写它。
 
-Gorse 通过内部网络连接 PostgreSQL，使用独立表前缀；推荐服务不可用或首次数据对账未完成时自动使用本地推荐。首次对账分批扫描全部影片和历史反馈，状态可在管理页面查看；之后增量同步反馈，并定期重新对账影片及历史数据。服务重启或请求失败后从持久化游标继续，不要求 Redis。由于对账受目录规模和服务负载影响，首次完成可能需要较长时间；Gorse 完成同步后仍需时间训练。
+Gorse 通过内部网络连接 PostgreSQL，使用独立表前缀。推荐强依赖 Gorse：服务不可用、未启用或首次数据对账未完成时接口返回 503，不使用本地回退。首次对账分批扫描全部影片和历史反馈，状态可在管理页面查看；之后增量同步反馈，并定期重新对账影片及历史数据。服务重启或请求失败后从持久化游标继续，不要求 Redis。由于对账、内容相似度索引受目录规模和服务负载影响，首次完成可能需要较长时间，索引构建期间推荐可能为空。
 
-也可直接使用 `compose.yaml` 选择外部数据库或旧版手动安装模式；Redis 可通过额外 profile 启用。请在运行前通过环境或私有 `.env` 文件设置 `DB_PASSWORD`，可单独设置 `DB_ROOT_PASSWORD`。直接使用原始 Compose 文件时应自行限制初始化前的网络访问。
+也可直接使用 `compose.yaml` 选择外部数据库或旧版手动安装模式；Redis 可通过额外 profile 启用。请在运行前通过环境或私有 `.env` 文件设置 `DB_PASSWORD`。直接使用原始 Compose 文件时应自行限制初始化前的网络访问。
 
 本机可以通过 HTTP 试用；生产环境应使用 HTTPS，避免令牌在网络中被窃取。
 
 ```bash
 docker compose --profile postgres up -d --build
-docker compose --profile mysql up -d --build
 docker compose --profile postgres --profile redis up -d --build
 docker compose down
 ```
 
-以上三条 `up` 命令是互斥的手动部署示例，选择其中一条。容器内的数据库主机分别填写 `postgres` 或 `mysql`；启用 Redis 时地址填写 `redis:6379`。应用配置与数据库均使用 Docker 卷持久化。迁移数据库或恢复备份时，应同时保留应用数据卷，禁止删除该卷后直接重开安装向导。
+以上两条 `up` 命令是互斥的手动部署示例，选择其中一条。容器内的数据库主机填写 `postgres`；启用 Redis 时地址填写 `redis:6379`。应用配置与数据库均使用 Docker 卷持久化。迁移数据库或恢复备份时，应同时保留应用数据卷，禁止删除该卷后直接重开安装向导。
 
 应用容器以非 root 用户运行 Chromium，保留浏览器沙箱。Compose 使用 `docker/chromium-seccomp.json`：该配置基于 Docker 默认配置，仅补充浏览器沙箱所需的用户、PID 和网络命名空间规则；不要替换为 `seccomp=unconfined` 或禁用浏览器沙箱。Compose 同时启用 init 进程，以回收浏览器退出后的子进程。直接使用 `docker run` 时须传入 `--init --security-opt seccomp=./docker/chromium-seccomp.json`，宿主机也须允许非特权用户命名空间。容器内存建议至少 1 GiB；浏览器任务限制为单并发。动态来源及图片的地址必须解析为公网 IP；如果系统 DNS 仅返回 Fake-IP，应用会通过 Cloudflare 加密 DNS 查询该域名，并校验及固定所得公网地址。该回退依赖能访问 Cloudflare，且会向其发送对应域名；内网地址和其他保留地址仍被拒绝。
 
@@ -85,8 +84,9 @@ docker compose logs -f app
 - 影片详情可按需寻找 Jable 的 HLS 播放地址，优先由浏览器直连，失败时尝试服务端转发；不会下载或长期保存视频文件。转发仅允许公网 HTTPS 地址，阻止内网、IP 直连和不安全重定向；当前转发不使用来源配置中的 HTTP 代理。播放地址和转发令牌可能过期，重新查找可刷新；重启或多实例切换后须重新查找播放来源。
 - 工作进程异常退出后，其他工作进程会回收约两分钟未更新的任务并重试；任务处理需要保持幂等，避免进程在写入后退出造成重复执行。
 - 配置 SMTP 后提供密码重置；重置令牌一次性有效，更新密码会撤销旧会话。
-- 人工标注与猜你喜欢推荐：支持在人工标注页面随机拉取番号，提供“喜欢”、“不喜欢”、“不确定”三个选项，生成偏好特征参数（演员、类别、制作商等权重）并持久化；引入 Gorse 推荐系统库（`github.com/gorse-io/gorse-go`）实现推荐算法与交互数据同步。当标注达到门槛（默认 5 部）后“猜你喜欢”生效；猜你喜欢页面可继续交互反馈以持续强化模型训练。推荐将最多 100 条 Gorse 候选按本地偏好重排，并与近期影片及偏好演员的本地候选去重后统一分页；新提交的“不确定”不增加偏好权重。
+- 人工标注与猜你喜欢推荐：支持“喜欢”、“不喜欢”、“不确定”反馈和按用户隔离的喜欢列表。达到门槛后，推荐仅使用 Gorse 的标签相似候选并保持原有顺序，过滤已标注或隐藏作品后分页；不再使用本地重排或补足。托管配置以喜欢作品召回相似内容，不喜欢和不确定用于排除已标注作品，不代表它们已用于相似度惩罚；其他 Gorse 部署需要自行配置推荐流程。离线评估见 [推荐回放报告](docs/recommendation-offline-evaluation.md)。
 - 来源历史补全和探测使用独立工作队列，不会被长期运行的元数据回填占用；旧队列中尚未运行的相应任务会迁移，已运行任务不被抢占，异常恢复后的旧任务会在维护周期重新检查。
+- 来源采集使用独立队列，最多并发执行四个不同来源的任务；每个来源仍受既有去重和限速约束，不占用默认任务队列。旧任务在等待执行时自动迁移，运行中的任务不被抢占。
 - OpenAPI 文档：`GET /api/v1/openapi.yaml`。业务接口使用 `/api/v1` 前缀；列表响应包含 `data` 与 `meta`，错误包含 `error.code`。
 
 ## 测试
@@ -105,7 +105,6 @@ npm run build
 
 ```bash
 LIBREFANZA_TEST_DB_DRIVER=postgres LIBREFANZA_TEST_DB_PORT=5432 go test -p 1 ./... -count=1
-LIBREFANZA_TEST_DB_DRIVER=mysql LIBREFANZA_TEST_DB_PORT=3306 go test -p 1 ./... -count=1
 ```
 
 集成测试使用的测试数据库连接参数见测试源码；设置 `LIBREFANZA_TEST_REDIS_PORT` 可额外运行 Redis 集成用例。浏览器测试需要已启动的新服务和 Playwright Chromium：`cd frontend && npm run test:e2e`。如使用本机 Chrome，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其路径。

@@ -16,10 +16,23 @@ auto_insert_item = false
 
 [recommend]
 cache_size = 100
+context_size = 1000
 
 [recommend.data_source]
 positive_feedback_types = ["like"]
 read_feedback_types = ["read", "dislike"]
+
+[[recommend.item-to-item]]
+name = "content"
+type = "tags"
+column = "item.Labels"
+
+[recommend.ranker]
+type = "none"
+recommenders = ["item-to-item/content"]
+
+[recommend.fallback]
+recommenders = ["item-to-item/content"]
 
 [blob]
 uri = "/var/lib/gorse/blob"

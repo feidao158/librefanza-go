@@ -26,8 +26,6 @@ func WithInstallationLock(ctx context.Context, db *gorm.DB, driver string, fn fu
 	switch driver {
 	case "postgres":
 		acquire, release = "SELECT pg_try_advisory_lock(hashtext('librefanza/setup'))", "SELECT pg_advisory_unlock(hashtext('librefanza/setup'))"
-	case "mysql":
-		acquire, release = "SELECT GET_LOCK(CONCAT(DATABASE(), ':librefanza:setup'), 0)", "SELECT RELEASE_LOCK(CONCAT(DATABASE(), ':librefanza:setup'))"
 	default:
 		return errors.New("unsupported database driver")
 	}

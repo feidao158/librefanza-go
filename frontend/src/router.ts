@@ -9,10 +9,11 @@ import AdminView from './views/AdminView.vue'
 import PasswordView from './views/PasswordView.vue'
 import AnnotationsView from './views/AnnotationsView.vue'
 import RecommendationsView from './views/RecommendationsView.vue'
+import LikedView from './views/LikedView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to, from) => to.path === '/likes' && from.path.startsWith('/movies/') ? false : { top: 0 },
   routes: [
     { path: '/', component: MoviesView },
     { path: '/movies', component: MoviesView },
@@ -22,6 +23,7 @@ export const router = createRouter({
     { path: '/actresses/:id', component: ActressView },
     { path: '/annotations', component: AnnotationsView },
     { path: '/recommendations', component: RecommendationsView },
+    { path: '/likes', component: LikedView },
     { path: '/login', component: AuthView },
     { path: '/register', component: AuthView },
     { path: '/forgot-password', component: PasswordView },

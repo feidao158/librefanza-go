@@ -10,11 +10,11 @@ import (
 	"gorm.io/gorm"
 )
 
-//go:embed migrations/*/*.sql
+//go:embed migrations/postgres/*.sql
 var migrations embed.FS
 
 func Migrate(ctx context.Context, db *gorm.DB, driver string) error {
-	if driver != "mysql" && driver != "postgres" {
+	if driver != "postgres" {
 		return fmt.Errorf("unsupported database driver: %s", driver)
 	}
 	files, err := fs.Sub(migrations, "migrations/"+driver)

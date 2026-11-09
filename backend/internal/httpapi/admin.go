@@ -44,6 +44,26 @@ func registerAdminRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		return db.WithContext(c.Request.Context())
 	}
+	api.GET("/admin/dashboard", func(c *gin.Context) {
+		db := databaseForAdmin(c)
+		if db == nil {
+			return
+		}
+		var movies, sourceItems, errors24h int64
+		var queues []struct {
+			Queue  string `json:"queue"`
+			Status string `json:"status"`
+			Count  int64  `json:"count"`
+		}
+		if db.Model(&catalog.Movie{}).Where("is_hidden = ?", false).Count(&movies).Error != nil ||
+			db.Model(&catalog.SourceItem{}).Count(&sourceItems).Error != nil ||
+			db.Model(&logbook.Entry{}).Where("level = ? AND created_at >= ?", "error", time.Now().UTC().Add(-24*time.Hour)).Count(&errors24h).Error != nil ||
+			db.Model(&jobs.Job{}).Select("queue, status, count(*) AS count").Where("status IN ?", []string{"pending", "running", "retrying", "waiting", "paused"}).Group("queue, status").Scan(&queues).Error != nil {
+			respondError(c, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"movies": movies, "source_items": sourceItems, "errors_24h": errors24h, "queues": queues}})
+	})
 	api.GET("/admin/logs", func(c *gin.Context) {
 		db := databaseForAdmin(c)
 		if db == nil {

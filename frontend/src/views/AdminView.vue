@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { CalendarClock, FileCode2, FileText, Globe, HardDrive, Layers, ListTodo, Mail, Play, RefreshCw, Save, ScrollText, ShieldCheck, Sparkles, Upload, X } from 'lucide-vue-next'
+import { CalendarClock, FileCode2, FileText, Globe, HardDrive, LayoutDashboard, Layers, ListTodo, Mail, Play, RefreshCw, Save, ScrollText, ShieldCheck, Sparkles, Upload, X } from 'lucide-vue-next'
 import { api, jsonBody } from '../api/client'
 import Pagination from '../components/Pagination.vue'
 import CrawlManager from '../components/CrawlManager.vue'
 import LogViewer from '../components/LogViewer.vue'
+import Dashboard from '../components/Dashboard.vue'
 import SourceHealth, { type HealthState } from '../components/SourceHealth.vue'
 import { useAuthStore } from '../stores/auth'
 import type { GorseSettings, SourceItem } from '../types'
@@ -161,6 +162,7 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
     <div v-if="!auth.user?.is_admin" class="center-state">{{ $t('common.error') }}</div>
     <div v-else class="admin-layout">
       <aside class="admin-sidebar">
+        <RouterLink to="/admin/dashboard"><LayoutDashboard :size="16" class="inline-block mr-2 opacity-70" />{{ $t('dashboard.title') }}</RouterLink>
         <RouterLink to="/admin/sources"><Globe :size="16" class="inline-block mr-2 opacity-70" />{{ $t('admin.sources') }}</RouterLink>
         <RouterLink to="/admin/cache"><HardDrive :size="16" class="inline-block mr-2 opacity-70" />{{ $t('admin.cache') }}</RouterLink>
         <RouterLink to="/admin/schedule"><CalendarClock :size="16" class="inline-block mr-2 opacity-70" />{{ $t('admin.schedule') }}</RouterLink>
@@ -175,7 +177,8 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
         <div v-if="error" class="alert alert-error status-alert" role="alert">{{ $t('common.error') }}</div>
         <div v-if="success" class="alert alert-success status-alert" role="status">{{ $t('common.success') }}</div>
 
-        <form v-if="section === 'sources'" class="admin-form" @submit.prevent="saveSources">
+        <Dashboard v-if="section === 'dashboard'" />
+        <form v-else-if="section === 'sources'" class="admin-form" @submit.prevent="saveSources">
           <h2>{{ $t('admin.sources') }}</h2>
           <label class="field"><span>{{ $t('admin.apiID') }}</span><input v-model="sourceForm.fanza_api_id" class="input" type="password" :placeholder="sourceInfo?.fanza_configured ? $t('admin.configured') : $t('admin.notConfigured')"></label>
           <label class="field"><span>{{ $t('admin.affiliateID') }}</span><input v-model="sourceForm.fanza_affiliate_id" class="input" type="password" :placeholder="sourceInfo?.fanza_configured ? $t('admin.configured') : $t('admin.notConfigured')"></label>

@@ -190,17 +190,40 @@ paths:
       responses:
         '200':
           description: 返回统计信息
+  /admin/dashboard:
+    get:
+      tags: [管理]
+      summary: 获取管理员数据与任务队列汇总
+      responses:
+        '200':
+          description: 返回可见作品数、来源记录数、近 24 小时错误数和活动任务队列状态
+        '401':
+          description: 未登录
+        '403':
+          description: 非管理员
+  /annotations/likes:
+    get:
+      tags: [推荐与人工标注]
+      summary: 分页获取当前用户喜欢的可见作品
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 按最近标注时间倒序返回作品与总数
   /recommendations:
     get:
       tags: [推荐与人工标注]
       summary: 猜你喜欢：获取个性化推荐影片列表
-      description: 本地推荐在有限候选池内排序并分页，total 为本次候选池数量；Gorse 推荐的 total 为当前返回数量。
+      description: 仅返回 Gorse 当前候选并保持其顺序，total 为已读取候选中的可见未标注作品数量。
       parameters:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/PageSize' }
       responses:
         '200':
           description: 返回猜你喜欢推荐影片列表与状态
+        '503':
+          description: 推荐服务未启用、未完成同步或暂时不可用
   /recommendations/feedback:
     post:
       tags: [推荐与人工标注]
@@ -993,7 +1016,7 @@ components:
       type: object
       required: [driver, host, port, name, user]
       properties:
-        driver: { type: string, enum: [mysql, postgres] }
+        driver: { type: string, enum: [postgres] }
         host: { type: string }
         port: { type: integer }
         name: { type: string }

@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	jobs "github.com/jdziat/simple-durable-jobs/v4"
@@ -10,6 +11,7 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/logbook"
 	"github.com/libredmm/librefanza/backend/internal/sourcehealth"
 	"github.com/libredmm/librefanza/backend/internal/sources"
+	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -116,64 +118,76 @@ func (m *Manager) EnrichmentStatus(ctx context.Context, id string) (MetadataStat
 
 func (m *Manager) runEnrichment(ctx context.Context, jobID, id string, names []string, collect func(context.Context, string, string) (bool, error)) error {
 	var failures []error
+	var failuresMu sync.Mutex
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(3)
 	for _, name := range names {
-		var progress MetadataSourceProgress
-		if id != "" {
-			var recent MetadataSourceProgress
-			err := m.db.WithContext(ctx).Where("job_id <> ? AND movie_id = ? AND source = ? AND status = ? AND found = ? AND updated_at > ?", jobID, id, name, "completed", true, time.Now().UTC().Add(-24*time.Hour)).Order("updated_at DESC").First(&recent).Error
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-			if err == nil {
-				var count int64
-				if err := m.db.WithContext(ctx).Model(&catalog.SourceItem{}).Where("normalized_id = ? AND source = ?", id, name).Count(&count).Error; err != nil {
-					return err
-				}
-				if count > 0 {
-					progress = MetadataSourceProgress{JobID: jobID, MovieID: id, Source: name, Status: "completed", Found: false, UpdatedAt: recent.UpdatedAt}
-					if err := m.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "job_id"}, {Name: "source"}}, DoUpdates: clause.AssignmentColumns([]string{"movie_id", "status", "found", "updated_at"})}).Create(&progress).Error; err != nil {
+		name := name
+		group.Go(func() error {
+			return protectTaskError(func() error {
+				ctx := groupCtx
+				var progress MetadataSourceProgress
+				if id != "" {
+					var recent MetadataSourceProgress
+					err := m.db.WithContext(ctx).Where("job_id <> ? AND movie_id = ? AND source = ? AND status = ? AND found = ? AND updated_at > ?", jobID, id, name, "completed", true, time.Now().UTC().Add(-24*time.Hour)).Order("updated_at DESC").First(&recent).Error
+					if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 						return err
 					}
-					continue
+					if err == nil {
+						var count int64
+						if err := m.db.WithContext(ctx).Model(&catalog.SourceItem{}).Where("normalized_id = ? AND source = ?", id, name).Count(&count).Error; err != nil {
+							return err
+						}
+						if count > 0 {
+							progress = MetadataSourceProgress{JobID: jobID, MovieID: id, Source: name, Status: "completed", Found: false, UpdatedAt: recent.UpdatedAt}
+							if err := m.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "job_id"}, {Name: "source"}}, DoUpdates: clause.AssignmentColumns([]string{"movie_id", "status", "found", "updated_at"})}).Create(&progress).Error; err != nil {
+								return err
+							}
+							return nil
+						}
+					}
 				}
-			}
-		}
-		err := m.db.WithContext(ctx).Where("job_id = ? AND source = ?", jobID, name).First(&progress).Error
-		if err == nil && progress.Status == "completed" {
-			continue
-		}
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		found, collectErr := collect(ctx, id, name)
-		status := "completed"
-		entry := logbook.Entry{}
-		if collectErr != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			status = "deferred"
-			logbook.ApplyFailure(&entry, collectErr)
-			var deferred *sources.DeferredError
-			if !errors.As(collectErr, &deferred) {
-				failures = append(failures, collectErr)
-			}
-			m.RecordSourceFailure(ctx, name, collectErr)
-		}
-		attempts := progress.Attempts + 1
-		progress = MetadataSourceProgress{JobID: jobID, MovieID: id, Source: name, Status: status, Attempts: attempts, Reason: entry.Reason, HTTPStatus: entry.HTTPStatus, Found: found, UpdatedAt: time.Now().UTC()}
-		if err := m.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "job_id"}, {Name: "source"}}, DoUpdates: clause.AssignmentColumns([]string{"movie_id", "status", "attempts", "reason", "http_status", "found", "updated_at"})}).Create(&progress).Error; err != nil {
-			return err
-		}
-		var saveErr *sources.SaveError
-		if errors.As(collectErr, &saveErr) {
-			return collectErr
-		}
+				err := m.db.WithContext(ctx).Where("job_id = ? AND source = ?", jobID, name).First(&progress).Error
+				if err == nil && progress.Status == "completed" {
+					return nil
+				}
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				found, collectErr := collect(ctx, id, name)
+				status := "completed"
+				entry := logbook.Entry{}
+				if collectErr != nil {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					status = "deferred"
+					logbook.ApplyFailure(&entry, collectErr)
+					var deferred *sources.DeferredError
+					if !errors.As(collectErr, &deferred) {
+						failuresMu.Lock()
+						failures = append(failures, collectErr)
+						failuresMu.Unlock()
+					}
+					m.RecordSourceFailure(ctx, name, collectErr)
+				}
+				attempts := progress.Attempts + 1
+				progress = MetadataSourceProgress{JobID: jobID, MovieID: id, Source: name, Status: status, Attempts: attempts, Reason: entry.Reason, HTTPStatus: entry.HTTPStatus, Found: found, UpdatedAt: time.Now().UTC()}
+				if err := m.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "job_id"}, {Name: "source"}}, DoUpdates: clause.AssignmentColumns([]string{"movie_id", "status", "attempts", "reason", "http_status", "found", "updated_at"})}).Create(&progress).Error; err != nil {
+					return err
+				}
+				var saveErr *sources.SaveError
+				if errors.As(collectErr, &saveErr) {
+					return collectErr
+				}
+				return nil
+			})
+		})
 	}
-	return errors.Join(failures...)
+	return errors.Join(group.Wait(), errors.Join(failures...))
 }
 
 func (m *Manager) ConfigureMetadata(collect func(context.Context, string, string) (bool, error), reparse func(context.Context, catalog.SourceItem) error) error {
@@ -188,6 +202,9 @@ func (m *Manager) ConfigureMetadata(collect func(context.Context, string, string
 	})
 	m.queue.Register("metadata_backfill_tick", func(ctx context.Context, _ struct{}) error {
 		return protectTaskError(func() error {
+			if err := migrateCrawlJobs(ctx, m.db); err != nil {
+				return err
+			}
 			if err := m.EnqueueDeferredMetadata(ctx); err != nil {
 				return err
 			}

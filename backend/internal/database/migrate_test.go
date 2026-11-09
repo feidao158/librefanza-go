@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/libredmm/librefanza/backend/internal/config"
-	"github.com/pressly/goose/v3"
 )
 
 func TestMigrationsAgainstDatabase(t *testing.T) {
@@ -32,25 +31,6 @@ func TestMigrationsAgainstDatabase(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		if err := Migrate(context.Background(), db, driver); err != nil {
 			t.Fatalf("migration %d: %v", i, err)
-		}
-	}
-	if driver == "mysql" {
-		if err := db.Exec("DELETE FROM goose_db_version WHERE version_id IN ?", []int{2, 3, 4}).Error; err != nil {
-			t.Fatal(err)
-		}
-		files, err := fs.Sub(migrations, "migrations/mysql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		provider, err := goose.NewProvider(goose.Dialect(driver), sqlDB, files, goose.WithAllowOutofOrder(true))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := provider.Up(context.Background()); err != nil {
-			t.Fatalf("migration did not recover after the index was created: %v", err)
-		}
-		if err := Migrate(context.Background(), db, driver); err != nil {
-			t.Fatal(err)
 		}
 	}
 	for _, name := range []string{"users", "api_sessions", "movies", "actresses", "source_items", "source_pages", "movie_cast", "settings", "search_cooldowns", "source_crawl_progress", "application_logs", "user_feedbacks", "user_recommendation_profiles"} {

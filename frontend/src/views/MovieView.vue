@@ -28,6 +28,11 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let metadataTimer: ReturnType<typeof setTimeout> | undefined
 let attempted = false
 const id = computed(() => String(route.params.id || '').toUpperCase())
+const likesPage = computed(() => {
+  const page = Number(route.query.likes_page)
+  return route.query.from === 'likes' && Number.isSafeInteger(page) && page > 0 ? page : null
+})
+const detailQuery = computed(() => likesPage.value ? { from: 'likes', likes_page: String(likesPage.value) } : {})
 const activeItem = computed(() => movie.value?.versions?.find(item => String(item.id) === String(route.query.source_item || '')) || movie.value?.preferred_item)
 const metadata = computed<MovieMetadata>(() => activeItem.value?.metadata || {})
 const items = computed(() => movie.value?.versions?.length ? movie.value.versions : movie.value?.preferred_item ? [movie.value.preferred_item] : [])
@@ -161,7 +166,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
 
 <template>
   <div class="content-wrap detail-wrap">
-    <RouterLink to="/movies" class="back-link"><ArrowLeft :size="16" />{{ $t('nav.movies') }}</RouterLink>
+    <RouterLink :to="likesPage ? { path: '/likes', query: { page: likesPage } } : '/movies'" class="back-link"><ArrowLeft :size="16" />{{ $t(likesPage ? 'nav.likes' : 'nav.movies') }}</RouterLink>
     <div v-if="loading" class="center-state">
       <span class="loading loading-spinner loading-md text-emerald-600"></span>
       <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
@@ -305,10 +310,10 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
       <section v-if="movie.versions && movie.versions.length > 1" class="detail-section">
         <h3>{{ $t('movies.versions') }}</h3>
         <div class="version-list">
-          <RouterLink :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}` }" :aria-current="!route.query.source_item ? 'true' : undefined">
+          <RouterLink :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}`, query: detailQuery }" :aria-current="!route.query.source_item ? 'true' : undefined">
             <strong>{{ $t('common.all') }}</strong>
           </RouterLink>
-          <RouterLink v-for="item in movie.versions" :key="item.id" :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}`, query: { source_item: item.id } }" :aria-current="route.query.source_item && item.id === activeItem.id ? 'true' : undefined">
+          <RouterLink v-for="item in movie.versions" :key="item.id" :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}`, query: { ...detailQuery, source_item: item.id } }" :aria-current="route.query.source_item && item.id === activeItem.id ? 'true' : undefined">
             <strong>{{ item.source.toUpperCase() }}</strong>
             <span>{{ item.title }}</span>
           </RouterLink>
