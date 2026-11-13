@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,35 @@ import (
 	"testing"
 	"time"
 )
+
+func TestJableChallengeIsDistinguishedFromOtherFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    int
+		challenge bool
+		body      string
+	}{
+		{"验证拦截", 403, true, ""},
+		{"普通拒绝", 403, false, ""},
+		{"成功状态的验证页面", 200, true, `<form id="challenge-form"></form>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.challenge && tc.status == 403 {
+					w.Header().Set("cf-mitigated", "challenge")
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			_, _, err := FetchJablePage(context.Background(), ClientSettings{JableURL: server.URL}, "ABC-123")
+			var request *RequestError
+			if !errors.As(err, &request) || (request.Reason == "challenge") != tc.challenge {
+				t.Fatalf("验证状态错误: %v", err)
+			}
+		})
+	}
+}
 
 func TestAdditionalProvidersSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

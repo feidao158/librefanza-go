@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -12,10 +13,53 @@ import (
 	"github.com/libredmm/librefanza/backend/internal/playback"
 	"github.com/libredmm/librefanza/backend/internal/settings"
 	"github.com/libredmm/librefanza/backend/internal/sources"
+	"github.com/libredmm/librefanza/backend/internal/torrentplay"
 )
 
 func registerPlaybackRoutes(api *gin.RouterGroup, provider *database.Provider) {
 	service := playback.NewService()
+	torrents := torrentplay.NewManager()
+	api.POST("/movies/:id/torrent-sessions", func(c *gin.Context) {
+		db, err := provider.Database(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "database_unavailable")
+			return
+		}
+		id := strings.ToUpper(c.Param("id"))
+		if _, err := catalog.NewRepository(db).Movie(c.Request.Context(), id); err != nil {
+			respondCatalogError(c, err)
+			return
+		}
+		token, err := torrents.Start(c.Request.Context(), id)
+		if err != nil {
+			if errors.Is(err, torrentplay.ErrBusy) {
+				respondError(c, http.StatusTooManyRequests, "torrent_busy")
+			} else {
+				respondError(c, http.StatusBadGateway, "torrent_unavailable")
+			}
+			return
+		}
+		s := torrents.Session(token)
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusCreated, gin.H{"data": gin.H{"token": token, "stream_url": "/api/v1/torrent-sessions/" + token + "/stream", "title": s.Title, "seeders": s.Seeders, "source_url": s.Page}})
+	})
+	api.GET("/torrent-sessions/:token/stream", func(c *gin.Context) {
+		s := torrents.Session(c.Param("token"))
+		if s == nil {
+			respondError(c, http.StatusNotFound, "torrent_session_expired")
+			return
+		}
+		s.Serve(c.Writer, c.Request)
+	})
+	api.HEAD("/torrent-sessions/:token/stream", func(c *gin.Context) {
+		s := torrents.Session(c.Param("token"))
+		if s == nil {
+			respondError(c, http.StatusNotFound, "torrent_session_expired")
+			return
+		}
+		s.Serve(c.Writer, c.Request)
+	})
+	api.DELETE("/torrent-sessions/:token", func(c *gin.Context) { torrents.Close(c.Param("token")); c.Status(http.StatusNoContent) })
 	api.GET("/movies/:id/playbacks", func(c *gin.Context) {
 		db, err := provider.Database(c.Request.Context())
 		if err != nil {
@@ -34,11 +78,7 @@ func registerPlaybackRoutes(api *gin.RouterGroup, provider *database.Provider) {
 		}
 		body, referer, err := sources.FetchJablePage(c.Request.Context(), cfg, id)
 		if err != nil {
-			if strings.Contains(err.Error(), "HTTP 404") {
-				c.JSON(http.StatusOK, gin.H{"data": []any{}})
-			} else {
-				respondError(c, http.StatusBadGateway, "playback_source_unavailable")
-			}
+			respondPlaybackFetchError(c, err)
 			return
 		}
 		item, err := sources.ParsePage("jable", referer, body)
@@ -66,4 +106,15 @@ func registerPlaybackRoutes(api *gin.RouterGroup, provider *database.Provider) {
 	api.GET("/playback/relay/:token", func(c *gin.Context) {
 		service.Relay(c.Writer, c.Request, c.Param("token"))
 	})
+}
+
+func respondPlaybackFetchError(c *gin.Context, err error) {
+	var sourceError *sources.RequestError
+	if errors.As(err, &sourceError) && sourceError.Reason == "challenge" {
+		respondError(c, http.StatusBadGateway, "playback_verification_required")
+	} else if errors.As(err, &sourceError) && sourceError.Status == http.StatusNotFound {
+		c.JSON(http.StatusOK, gin.H{"data": []any{}})
+	} else {
+		respondError(c, http.StatusBadGateway, "playback_source_unavailable")
+	}
 }

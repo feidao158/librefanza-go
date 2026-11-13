@@ -304,6 +304,9 @@ func FetchJablePage(ctx context.Context, settings ClientSettings, id string) ([]
 	if err != nil {
 		return nil, "", err
 	}
+	if isSourceChallenge(body) {
+		return nil, "", &RequestError{Reason: "challenge", Status: http.StatusOK}
+	}
 	return body, endpoint.String(), nil
 }
 

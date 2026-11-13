@@ -180,9 +180,34 @@ paths:
               properties:
                 normalized_id: { type: string }
                 action: { type: string, enum: [like, dislike, uncertain] }
+                prefetched: { type: boolean, description: 使用预取候选，省略同步下一部查询 }
+                candidate_ids: { type: array, maxItems: 10, items: { type: string }, description: 需要核验的预取候选番号 }
       responses:
         '200':
-          description: 标注保存成功，返回更新统计与下一部影片
+          description: 标注保存成功，返回更新统计、下一部影片及 eligible_ids 有效候选番号
+  /annotations/candidates:
+    get:
+      tags: [推荐与人工标注]
+      summary: 批量获取未标注影片供后台预加载
+      parameters:
+        - { name: exclude, in: query, schema: { type: string } }
+      responses:
+        '200': { description: 返回最多五部影片与标注统计 }
+  /annotations/candidates/check:
+    post:
+      tags: [推荐与人工标注]
+      summary: 校验预取影片是否仍可用于标注
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, maxItems: 10, items: { type: string } }
+      responses:
+        '200': { description: 按原顺序返回可见且未标注的番号 }
   /annotations/stats:
     get:
       tags: [推荐与人工标注]
@@ -238,9 +263,11 @@ paths:
               properties:
                 normalized_id: { type: string }
                 action: { type: string, enum: [like, dislike, uncertain] }
+                prefetched: { type: boolean, description: 使用预取候选，省略同步下一部查询 }
+                candidate_ids: { type: array, maxItems: 10, items: { type: string }, description: 需要核验的预取候选番号 }
       responses:
         '200':
-          description: 反馈保存成功
+          description: 反馈保存成功，返回更新统计及 eligible_ids 有效候选番号
   /movies:
     get:
       tags: [影片与演员]
@@ -629,6 +656,35 @@ paths:
               properties:
                 type: { type: string, enum: [actress_crawl, fanza_crawl, mgstage_crawl, rebuild_movies] }
       responses: { '202': { description: 返回任务编号 } }
+  /movies/{id}/torrent-sessions:
+    post:
+      tags: [影片]
+      summary: 搜索匹配番号并建立磁力播放会话
+      parameters: [{ $ref: '#/components/parameters/ID' }]
+      responses:
+        '201': { description: 返回播放会话令牌、流地址和来源信息 }
+        '404': { description: 影片不存在 }
+        '429': { description: 会话数量达到限制 }
+        '502': { description: 没有可用的磁力视频 }
+  /torrent-sessions/{token}:
+    delete:
+      tags: [影片]
+      summary: 关闭磁力播放会话并清理缓存
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      responses: { '204': { description: 会话已关闭 } }
+  /torrent-sessions/{token}/stream:
+    get:
+      tags: [影片]
+      summary: 读取磁力视频，支持范围请求
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - { name: Range, in: header, required: false, schema: { type: string } }
+      responses: { '200': { description: 视频内容 }, '206': { description: 视频范围内容 }, '404': { description: 会话不存在或已过期 } }
+    head:
+      tags: [影片]
+      summary: 查询磁力视频长度与范围支持
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 视频头信息 }, '404': { description: 会话不存在或已过期 } }
   /movies/{id}/playbacks:
     get:
       tags: [影片]
@@ -637,7 +693,7 @@ paths:
       responses:
         '200': { description: 可用播放来源及短期有效地址 }
         '404': { description: 影片不存在或已隐藏 }
-        '502': { description: 来源不可访问 }
+        '502': { description: 来源不可访问；playback_verification_required 表示来源要求人工验证 }
   /playback/relay/{token}:
     get:
       tags: [影片]

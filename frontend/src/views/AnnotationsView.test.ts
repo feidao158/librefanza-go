@@ -92,6 +92,7 @@ describe('AnnotationsView', () => {
       expect(wrapper.text()).toContain('测试番号标题')
       expect(wrapper.text()).toContain('测试演员')
       expect(wrapper.text()).toContain('测试分类')
+      expect(wrapper.find('a[href="https://jable.tv/videos/test-101/"]').exists()).toBe(true)
     })
 
     // 找到喜欢按钮并点击
@@ -131,5 +132,25 @@ describe('AnnotationsView', () => {
       const nextCall = calls.find((c: any) => c[0].includes('/annotations/next?exclude=TEST-101'))
       expect(nextCall).toBeDefined()
     })
+  })
+
+  it('使用后台候选切换且不展示服务端判定失效的影片', async () => {
+    const stats = { total: 2, liked: 1, disliked: 1, uncertain: 0, min_required: 5, ready: false }
+    const result = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) })
+    const mock = vi.fn(async (url: string) => {
+      if (url.includes('/annotations/next')) return result({ movie: { normalized_id: 'TEST-101' }, stats })
+      if (url.includes('/annotations/candidates')) return result({ movies: [{ normalized_id: 'TEST-102' }, { normalized_id: 'TEST-103' }], stats })
+      if (url.includes('/annotations/feedback')) return result({ stats, eligible_ids: ['TEST-103'] })
+      throw new Error('未知请求')
+    })
+    vi.stubGlobal('fetch', mock)
+    const wrapper = mount(AnnotationsView, { global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await vi.waitFor(() => expect(mock.mock.calls.some(([url]) => url.includes('/annotations/candidates'))).toBe(true))
+    await vi.waitFor(() => expect(wrapper.text()).toContain('TEST-101'))
+    await wrapper.findAll('.grid-cols-3 button')[0].trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('TEST-103'))
+    expect(wrapper.text()).not.toContain('TEST-102')
+    expect(mock.mock.calls.filter(([url]) => url.includes('/annotations/next'))).toHaveLength(1)
+    wrapper.unmount()
   })
 })

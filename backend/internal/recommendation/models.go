@@ -59,6 +59,8 @@ type Stats struct {
 
 // FeedbackInput 提交反馈入参
 type FeedbackInput struct {
-	NormalizedID string `json:"normalized_id"`
-	Action       string `json:"action"` // like, dislike, uncertain
+	NormalizedID string   `json:"normalized_id"`
+	Prefetched   bool     `json:"prefetched"`
+	CandidateIDs []string `json:"candidate_ids"`
+	Action       string   `json:"action"` // like, dislike, uncertain
 }

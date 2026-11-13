@@ -51,6 +51,39 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 		})
 	})
 
+	// 批量获取待标注候选，用于客户端预加载。
+	api.GET("/annotations/candidates", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		movies, stats, err := svc.GetAnnotationCandidates(c.Request.Context(), resolveID(c), []string{c.Query("exclude")}, 5)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"movies": movies, "stats": stats}})
+	})
+	api.POST("/annotations/candidates/check", func(c *gin.Context) {
+		svc := service(c)
+		if svc == nil {
+			return
+		}
+		var input struct {
+			IDs []string `json:"ids"`
+		}
+		if c.ShouldBindJSON(&input) != nil || len(input.IDs) > 10 {
+			respondError(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		ids, err := svc.FilterUnrated(c.Request.Context(), resolveID(c), input.IDs)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": ids})
+	})
+
 	// POST /api/v1/annotations/feedback 提交人工标注选项（喜欢/不喜欢/不确定）
 	api.POST("/annotations/feedback", func(c *gin.Context) {
 		svc := service(c)
@@ -62,7 +95,7 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 			respondError(c, http.StatusBadRequest, "invalid_request")
 			return
 		}
-		if input.NormalizedID == "" || input.Action == "" {
+		if input.NormalizedID == "" || input.Action == "" || len(input.CandidateIDs) > 10 {
 			respondError(c, http.StatusBadRequest, "invalid_request")
 			return
 		}
@@ -81,11 +114,13 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 			return
 		}
 		svc.RecordFeedback(c.Request.Context(), "annotation", input.Action, stats)
+		eligible, _ := svc.FilterUnrated(c.Request.Context(), userID, input.CandidateIDs)
 		c.JSON(http.StatusOK, gin.H{
 			"data": gin.H{
-				"success":    true,
-				"stats":      stats,
-				"next_movie": nextMovie,
+				"success":      true,
+				"stats":        stats,
+				"next_movie":   nextMovie,
+				"eligible_ids": eligible,
 			},
 		})
 	})
@@ -164,7 +199,7 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 			respondError(c, http.StatusBadRequest, "invalid_request")
 			return
 		}
-		if input.NormalizedID == "" || input.Action == "" {
+		if input.NormalizedID == "" || input.Action == "" || len(input.CandidateIDs) > 10 {
 			respondError(c, http.StatusBadRequest, "invalid_request")
 			return
 		}
@@ -183,11 +218,13 @@ func registerRecommendationRoutes(api *gin.RouterGroup, provider *database.Provi
 			return
 		}
 		svc.RecordFeedback(c.Request.Context(), "recommendation", input.Action, stats)
+		eligible, _ := svc.FilterUnrated(c.Request.Context(), userID, input.CandidateIDs)
 		c.JSON(http.StatusOK, gin.H{
 			"data": gin.H{
-				"success":    true,
-				"stats":      stats,
-				"next_movie": nextMovie,
+				"success":      true,
+				"stats":        stats,
+				"next_movie":   nextMovie,
+				"eligible_ids": eligible,
 			},
 		})
 	})

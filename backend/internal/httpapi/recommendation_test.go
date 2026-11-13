@@ -138,9 +138,18 @@ func TestRecommendationAPIWorkflow(t *testing.T) {
 	}
 
 	// 4. 提交第 5 次标注，达到 5 次阈值
-	body5, _ := json.Marshal(map[string]string{
+	candidatesReq := httptest.NewRequest(http.MethodGet, "/api/v1/annotations/candidates?exclude="+movieIDs[4], nil)
+	candidatesReq.Header.Set("X-Client-ID", clientID)
+	candidatesResponse := httptest.NewRecorder()
+	router.ServeHTTP(candidatesResponse, candidatesReq)
+	if candidatesResponse.Code != http.StatusOK || strings.Contains(candidatesResponse.Body.String(), movieIDs[4]) {
+		t.Fatalf("候选排除错误: %d %s", candidatesResponse.Code, candidatesResponse.Body.String())
+	}
+	body5, _ := json.Marshal(map[string]any{
 		"normalized_id": movieIDs[4],
 		"action":        "uncertain",
+		"prefetched":    true,
+		"candidate_ids": []string{movieIDs[0], movieIDs[4], movieIDs[5]},
 	})
 	postReq5 := httptest.NewRequest(http.MethodPost, "/api/v1/annotations/feedback", bytes.NewReader(body5))
 	postReq5.Header.Set("X-Client-ID", clientID)
@@ -149,6 +158,15 @@ func TestRecommendationAPIWorkflow(t *testing.T) {
 	router.ServeHTTP(postRec5, postReq5)
 	if postRec5.Code != http.StatusOK {
 		t.Fatalf("submit feedback 5: %d %s", postRec5.Code, postRec5.Body.String())
+	}
+	var prefetchResult struct {
+		Data struct {
+			NextMovie   *catalog.Movie `json:"next_movie"`
+			EligibleIDs []string       `json:"eligible_ids"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(postRec5.Body.Bytes(), &prefetchResult) != nil || prefetchResult.Data.NextMovie != nil || len(prefetchResult.Data.EligibleIDs) != 1 || prefetchResult.Data.EligibleIDs[0] != movieIDs[5] {
+		t.Fatalf("反馈候选校验错误: %s", postRec5.Body.String())
 	}
 
 	// 5. 未配置推荐服务时明确报告不可用。

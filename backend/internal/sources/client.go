@@ -572,8 +572,12 @@ func (p *httpProvider) request(ctx context.Context, method, target string, heade
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			reason := "http"
+			if p.kind == "jable" && strings.EqualFold(resp.Header.Get("cf-mitigated"), "challenge") {
+				reason = "challenge"
+			}
 			resp.Body.Close()
-			return nil, resp.StatusCode, &RequestError{Reason: "http", Status: resp.StatusCode}
+			return nil, resp.StatusCode, &RequestError{Reason: reason, Status: resp.StatusCode}
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 		resp.Body.Close()

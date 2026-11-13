@@ -2,9 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import { Calendar } from 'lucide-vue-next'
 import type { Movie } from '../types'
+import { jableURL } from './jable'
+import MoviePlayer from './MoviePlayer.vue'
 
 const props = defineProps<{ movie: Movie; likesPage?: number }>()
 const imageFailed = ref(false)
+const playerOpen = ref(false)
 const imageLoaded = ref(false)
 const imageIndex = ref(0)
 const images = computed(() => [...new Set([
@@ -28,7 +31,8 @@ function onImageError() {
 </script>
 
 <template>
-  <RouterLink class="movie-card" :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}`, query: likesPage ? { from: 'likes', likes_page: likesPage } : {} }">
+  <div class="movie-card">
+  <RouterLink class="movie-card-link" :to="{ path: `/movies/${encodeURIComponent(movie.normalized_id)}`, query: likesPage ? { from: 'likes', likes_page: likesPage } : {} }">
     <div class="movie-cover">
       <span v-if="!imageLoaded" class="cover-placeholder">{{ $t(!imageFailed && imageURL ? 'movies.loadingCover' : 'movies.noCover') }}</span>
       <img
@@ -52,4 +56,11 @@ function onImageError() {
       </div>
     </div>
   </RouterLink>
+  <button data-testid="card-play" class="btn btn-outline btn-sm mx-2 mb-1" @click="playerOpen = true">{{ $t('player.title') }}</button>
+  <a v-if="jableURL(movie.normalized_id)" class="btn btn-ghost btn-sm mx-2 mb-2" :href="jableURL(movie.normalized_id)" target="_blank" rel="noopener noreferrer">{{ $t('player.openJable') }}</a>
+  <Teleport to="body"><div v-if="playerOpen" class="modal modal-open" role="dialog" aria-modal="true">
+    <div class="modal-box max-w-4xl"><div class="admin-heading"><h2>{{ movie.normalized_id }}</h2><button class="btn btn-ghost btn-sm" :aria-label="$t('common.close')" @click="playerOpen = false">{{ $t('common.close') }}</button></div><MoviePlayer :id="movie.normalized_id" /></div>
+    <button class="modal-backdrop" :aria-label="$t('common.close')" @click="playerOpen = false"></button>
+  </div></Teleport>
+  </div>
 </template>

@@ -73,6 +73,12 @@ export interface FeedbackResponse {
   success: boolean
   stats: AnnotationStats
   next_movie?: Movie | null
+  eligible_ids?: string[] | null
+}
+
+export interface AnnotationCandidatesResponse {
+  movies: Movie[]
+  stats: AnnotationStats
 }
 
 export interface RecommendationResponse {

@@ -194,6 +194,20 @@ func TestRecommendationAndAnnotation(t *testing.T) {
 	}
 
 	// 此时未达到阈值，调用猜你喜欢应返回 ready=false 和空列表
+	candidates, _, err := svc.GetAnnotationCandidates(context.Background(), userID, []string{movieIDs[4]}, 5)
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("候选数量错误: %d，错误: %v", len(candidates), err)
+	}
+	for i := 0; i < 20; i++ {
+		candidates, _, err = svc.GetAnnotationCandidates(context.Background(), userID, []string{movieIDs[4]}, 5)
+		if err != nil || len(candidates) != 2 || candidates[0].NormalizedID == candidates[1].NormalizedID {
+			t.Fatalf("候选回绕后重复或缺失: %+v，错误: %v", candidates, err)
+		}
+	}
+	eligible, err := svc.FilterUnrated(context.Background(), userID, []string{movieIDs[0], movieIDs[6], movieIDs[6], movieIDs[5]})
+	if err != nil || len(eligible) != 2 || eligible[0] != movieIDs[6] || eligible[1] != movieIDs[5] {
+		t.Fatalf("候选校验错误: %v，错误: %v", eligible, err)
+	}
 	recs, recStats, _, err := svc.GetRecommendations(context.Background(), userID, 1, 10)
 	if err != nil {
 		t.Fatalf("get recommendations error: %v", err)

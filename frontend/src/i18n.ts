@@ -61,7 +61,7 @@ const messages = {
     sourceSession: { clearJable: '清除 Jable 会话', clearJavLibrary: '清除 JavLibrary 会话', clear: '清除 {source} 会话' },
     sourceHealth: { title: '来源状态', status: '状态', reason: '最近失败原因 / 次数', lastChecked: '最近检查', nextRetry: '下次重试', skipped: '已跳过', deferred: '部分来源将在恢复后继续采集：{count}', states: { unknown: '尚未检查', available: '可用', degraded: '异常', cooldown: '冷却中' }, source_retired: '来源已停用', source_deferred: '来源暂时冷却' },
     schedulePreview: { next: '下次执行', saved: '已保存计划' },
-    player: { title: '在线播放', play: '查找并播放', unavailable: '未找到可播放的来源', failed: '播放来源不可用，请稍后重试', relay: '服务器转发' },
+    player: { openJable: '在 Jable 打开', title: '在线播放', play: '查找并播放', torrentPlay: '磁力在线播放', connecting: '正在查找资源并连接节点，请稍候', torrentFailed: '视频加载失败，请重试或打开来源页面', buffering: '正在缓冲视频，请稍候', seeders: '做种人数：{count}', unavailable: '未找到可播放的来源', failed: '播放来源不可用，请稍后重试', verificationRequired: 'Jable 要求人工验证，请使用上方链接打开', relay: '服务器转发' },
   },
   en: {
     managedGorse: { internal: 'Built-in service', connected: 'Connected', disconnected: 'Disconnected', error: 'Sync failed, using local recommendations', ready: 'Initial synchronization complete', syncing: 'Synchronizing, using local recommendations', movies: 'Movie cursor', feedback: 'Feedback cursor' },
@@ -123,7 +123,7 @@ const messages = {
     sourceSession: { clearJable: 'Remove Jable session', clearJavLibrary: 'Remove JavLibrary session', clear: 'Remove {source} session' },
     sourceHealth: { title: 'Source status', status: 'Status', reason: 'Last failure / count', lastChecked: 'Last checked', nextRetry: 'Next retry', skipped: 'Skipped', deferred: 'Sources will resume when available: {count}', states: { unknown: 'Not checked', available: 'Available', degraded: 'Degraded', cooldown: 'Cooling down' }, source_retired: 'Source retired', source_deferred: 'Source temporarily deferred' },
     schedulePreview: { next: 'Next run', saved: 'Saved schedule' },
-    player: { title: 'Watch online', play: 'Find and play', unavailable: 'No playable source found', failed: 'Playback source is unavailable. Try again later.', relay: 'Server relay' },
+    player: { openJable: 'Open in Jable', title: 'Watch online', play: 'Find and play', torrentPlay: 'Play via magnet', connecting: 'Finding a source and connecting to peers', torrentFailed: 'Video could not be loaded. Retry or open the source page.', buffering: 'Buffering video, please wait', seeders: 'Seeders: {count}', unavailable: 'No playable source found', failed: 'Playback source is unavailable. Try again later.', verificationRequired: 'Jable requires human verification. Open the link above.', relay: 'Server relay' },
   },
 }
 

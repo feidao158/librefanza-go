@@ -6,10 +6,14 @@ import { ApiError, api, jsonBody } from '../api/client'
 import type { AnnotationStats, FeedbackResponse, Movie, RecommendationResponse } from '../types'
 import ImageLightbox, { type LightboxItem } from '../components/ImageLightbox.vue'
 import SmoothImage from '../components/SmoothImage.vue'
+import MoviePlayer from '../components/MoviePlayer.vue'
+import { MoviePreload } from '../components/moviePreload'
 
 const { t } = useI18n()
 
 const currentMovie = ref<Movie | null>(null)
+const preloaded = new MoviePreload()
+let disposed = false
 const stats = ref<AnnotationStats>({
   total: 0,
   liked: 0,
@@ -84,9 +88,11 @@ async function loadRecommendations() {
   descExpanded.value = false
   lightboxOpen.value = false
   try {
-    const res = await api<RecommendationResponse>('/recommendations?page_size=1&page=1')
+    const res = await api<RecommendationResponse>('/recommendations?page_size=5&page=1')
     stats.value = res.data.stats
+    preloaded.clear()
     currentMovie.value = res.data.ready ? res.data.movies[0] || null : null
+    preloaded.add(res.data.movies.slice(1), currentMovie.value?.normalized_id || '')
     feedbackSaved.value = false
   } catch (cause) {
     unavailable.value = cause instanceof ApiError && cause.code === 'recommendation_unavailable'
@@ -103,6 +109,7 @@ async function submitFeedback(action: 'like' | 'dislike' | 'uncertain') {
   feedbackError.value = false
   lastAction.value = action
   const currentId = currentMovie.value.normalized_id
+  const candidateIds = preloaded.ids()
 
   try {
     const res = await api<FeedbackResponse>('/recommendations/feedback', {
@@ -110,12 +117,22 @@ async function submitFeedback(action: 'like' | 'dislike' | 'uncertain') {
       body: jsonBody({
         normalized_id: currentId,
         action,
+        prefetched: true,
+        candidate_ids: candidateIds,
       }),
     })
     stats.value = res.data.stats
 
     feedbackSaved.value = true
-    await loadRecommendations()
+    const next = preloaded.takeEligible(res.data.eligible_ids || [])
+    if (next && !disposed) {
+      currentMovie.value = next
+      feedbackSaved.value = false
+      descExpanded.value = false
+      lightboxOpen.value = false
+    } else {
+      await loadRecommendations()
+    }
   } catch {
     feedbackError.value = true
   } finally {
@@ -149,6 +166,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  preloaded.clear()
   window.removeEventListener('keydown', handleKeyDown)
 })
 </script>
@@ -324,6 +343,8 @@ onBeforeUnmount(() => {
                     <ExternalLink :size="14" />
                   </RouterLink>
                 </div>
+
+                <MoviePlayer :id="currentMovie.normalized_id" />
 
                 <!-- 详细属性 -->
                 <div class="space-y-2.5 sm:space-y-3 mt-3 sm:mt-4 text-xs sm:text-sm text-base-content/80">

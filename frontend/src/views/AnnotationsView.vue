@@ -3,13 +3,28 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight, CheckCircle2, Clock, ExternalLink, HelpCircle, RefreshCw, Sparkles, Star, ThumbsDown, ThumbsUp, ZoomIn } from 'lucide-vue-next'
 import { api, jsonBody } from '../api/client'
-import type { AnnotationStats, FeedbackResponse, Movie, NextAnnotationResponse } from '../types'
+import type { AnnotationStats, FeedbackResponse, Movie, NextAnnotationResponse, AnnotationCandidatesResponse } from '../types'
 import ImageLightbox, { type LightboxItem } from '../components/ImageLightbox.vue'
 import SmoothImage from '../components/SmoothImage.vue'
+import MoviePlayer from '../components/MoviePlayer.vue'
+import { MoviePreload } from '../components/moviePreload'
 
 const { t } = useI18n()
 
 const movie = ref<Movie | null>(null)
+const preloaded = new MoviePreload()
+let prefetchVersion = 0
+let disposed = false
+
+async function prefetchCandidates(currentId: string) {
+  if (!currentId || preloaded.ids().length >= 2) return
+  const version = ++prefetchVersion
+  try {
+    const result = await api<AnnotationCandidatesResponse>(`/annotations/candidates?exclude=${encodeURIComponent(currentId)}`)
+    if (!disposed && version === prefetchVersion && movie.value?.normalized_id === currentId) preloaded.add(result.data.movies, currentId)
+  } catch { /* 预取失败时保留原有获取流程 */ }
+}
+
 const stats = ref<AnnotationStats>({
   total: 0,
   liked: 0,
@@ -20,6 +35,7 @@ const stats = ref<AnnotationStats>({
 })
 const loading = ref(true)
 const submitting = ref(false)
+const feedbackSaved = ref(false)
 const error = ref(false)
 const descExpanded = ref(false)
 
@@ -98,6 +114,8 @@ async function fetchNext(excludeId = '') {
     const res = await api<NextAnnotationResponse>(url)
     movie.value = res.data.movie
     stats.value = res.data.stats
+    feedbackSaved.value = false
+    void prefetchCandidates(movie.value?.normalized_id || '')
   } catch {
     error.value = true
   } finally {
@@ -106,30 +124,49 @@ async function fetchNext(excludeId = '') {
 }
 
 async function skipMovie() {
-  if (submitting.value) return
+  if (submitting.value || loading.value || !movie.value) return
+  submitting.value = true
   lastAction.value = 'skip'
-  await fetchNext(movie.value?.normalized_id || '')
+  try {
+    const ids = preloaded.ids()
+    const valid = ids.length ? (await api<string[]>('/annotations/candidates/check', { method: 'POST', body: jsonBody({ ids }) })).data : []
+    const next = preloaded.takeEligible(valid)
+    if (next) {
+      movie.value = next
+      feedbackSaved.value = false
+      descExpanded.value = false
+      lightboxOpen.value = false
+      void prefetchCandidates(next.normalized_id)
+    } else await fetchNext(movie.value.normalized_id)
+  } catch { error.value = true } finally { submitting.value = false }
 }
 
 async function submitAction(action: 'like' | 'dislike' | 'uncertain') {
-  if (!movie.value || submitting.value) return
+  if (!movie.value || submitting.value || loading.value || feedbackSaved.value) return
   submitting.value = true
   lastAction.value = action
   error.value = false
   lightboxOpen.value = false
   const currentId = movie.value.normalized_id
+  const candidateIds = preloaded.ids()
   try {
     const res = await api<FeedbackResponse>('/annotations/feedback', {
       method: 'POST',
       body: jsonBody({
         normalized_id: currentId,
         action,
+        prefetched: true,
+        candidate_ids: candidateIds,
       }),
     })
     stats.value = res.data.stats
+    feedbackSaved.value = true
     descExpanded.value = false
-    if (res.data.next_movie) {
-      movie.value = res.data.next_movie
+    const next = preloaded.takeEligible(res.data.eligible_ids || [])
+    if (next) {
+      movie.value = next
+      feedbackSaved.value = false
+      void prefetchCandidates(next.normalized_id)
     } else {
       await fetchNext(currentId)
     }
@@ -170,6 +207,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  prefetchVersion++
+  preloaded.clear()
   window.removeEventListener('keydown', handleKeyDown)
 })
 </script>
@@ -328,6 +368,8 @@ onBeforeUnmount(() => {
                 </RouterLink>
               </div>
 
+              <MoviePlayer :id="movie.normalized_id" />
+
               <!-- 详细属性 -->
               <div class="space-y-2.5 sm:space-y-3 mt-3 sm:mt-4 text-xs sm:text-sm text-base-content/80">
                 <!-- 发行日期与时长与评分 -->
@@ -440,7 +482,7 @@ onBeforeUnmount(() => {
                 <!-- 喜欢 -->
                 <button
                   class="btn btn-success text-white shadow font-bold text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
-                  :disabled="submitting"
+                  :disabled="submitting || feedbackSaved"
                   @click="submitAction('like')"
                 >
                   <ThumbsUp :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
@@ -451,7 +493,7 @@ onBeforeUnmount(() => {
                 <!-- 不确定 -->
                 <button
                   class="btn btn-outline border-base-content/30 text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
-                  :disabled="submitting"
+                  :disabled="submitting || feedbackSaved"
                   @click="submitAction('uncertain')"
                 >
                   <HelpCircle :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
@@ -462,7 +504,7 @@ onBeforeUnmount(() => {
                 <!-- 不喜欢 -->
                 <button
                   class="btn btn-error text-white shadow font-bold text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
-                  :disabled="submitting"
+                  :disabled="submitting || feedbackSaved"
                   @click="submitAction('dislike')"
                 >
                   <ThumbsDown :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />

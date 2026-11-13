@@ -22,6 +22,7 @@ describe('推荐连续标记', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountView()
     await vi.waitFor(() => expect(wrapper.text()).toContain('REC-001'))
+    expect(wrapper.find('a[href="https://jable.tv/videos/rec-001/"]').exists()).toBe(true)
     await wrapper.findAll('.grid-cols-3 button')[0].trigger('click')
     await vi.waitFor(() => expect(requests).toBe(2))
     expect(wrapper.text()).toContain('REC-001')
@@ -30,6 +31,7 @@ describe('推荐连续标记', () => {
     expect(fetchMock.mock.calls.filter(([url]) => url.includes('/feedback'))).toHaveLength(1)
     resolveNext(response({ ready: true, stats, movies: [{ normalized_id: 'REC-002' }] }))
     await vi.waitFor(() => expect(wrapper.text()).toContain('REC-002'))
+    expect(wrapper.find('a[href="https://jable.tv/videos/rec-002/"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -45,11 +47,26 @@ describe('推荐连续标记', () => {
     expect(wrapper.text()).not.toContain('换一批推荐')
     await wrapper.findAll('.grid-cols-3 button')[0].trigger('click')
     await vi.waitFor(() => expect(wrapper.text()).toContain('REC-002'))
+    await vi.waitFor(() => expect(wrapper.findAll('.grid-cols-3 button')[1].attributes('disabled')).toBeUndefined())
     await wrapper.findAll('.grid-cols-3 button')[1].trigger('click')
     await vi.waitFor(() => expect(wrapper.text()).toContain('暂无推荐结果'))
     expect(fetchMock.mock.calls.filter(([url]) => !url.includes('/feedback')).map(([url]) => url)).toEqual([
-      expect.stringContaining('page_size=1'), expect.stringContaining('page_size=1'), expect.stringContaining('page_size=1'),
+      expect.stringContaining('page_size=5'), expect.stringContaining('page_size=5'), expect.stringContaining('page_size=5'),
     ])
+    wrapper.unmount()
+  })
+
+  it('后台候选通过校验后直接切换，失效候选不会展示', async () => {
+    const fetchMock = vi.fn(async (url: string) => url.includes('/feedback')
+      ? response({ stats, eligible_ids: ['REC-003'] })
+      : response({ ready: true, stats, movies: ['REC-001', 'REC-002', 'REC-003'].map(normalized_id => ({ normalized_id })) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountView()
+    await vi.waitFor(() => expect(wrapper.text()).toContain('REC-001'))
+    await wrapper.findAll('.grid-cols-3 button')[0].trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('REC-003'))
+    expect(wrapper.text()).not.toContain('REC-002')
+    expect(fetchMock.mock.calls.filter(([url]) => !url.includes('/feedback'))).toHaveLength(1)
     wrapper.unmount()
   })
 

@@ -131,55 +131,85 @@ func (s *Service) GetLikedMovies(ctx context.Context, userID string, page, pageS
 	return movies, total, nil
 }
 
-// GetNextAnnotation 随机拉取一部未标注的番号供用户人工标注
+// GetNextAnnotation 随机拉取一部未标注的影片。
 func (s *Service) GetNextAnnotation(ctx context.Context, userID string, excludeID string) (*catalog.Movie, Stats, error) {
+	movies, stats, err := s.GetAnnotationCandidates(ctx, userID, []string{excludeID}, 1)
+	if err != nil || len(movies) == 0 {
+		return nil, stats, err
+	}
+	return &movies[0], stats, nil
+}
+
+// GetAnnotationCandidates 批量获取未标注候选，并在结果不足时从头补齐。
+func (s *Service) GetAnnotationCandidates(ctx context.Context, userID string, excluded []string, limit int) ([]catalog.Movie, Stats, error) {
 	stats, err := s.GetStats(ctx, userID)
 	if err != nil {
 		return nil, stats, err
 	}
-
-	// 使用子查询排除全部已标注影片，避免参数数量限制。
-	ratedQuery := s.db.WithContext(ctx).Model(&UserFeedback{}).Select("normalized_id").Where("user_id = ?", userID)
-	db := s.db.WithContext(ctx).Model(&catalog.Movie{}).Where("is_hidden = ?", false).Where("normalized_id NOT IN (?)", ratedQuery)
-	if excludeID != "" {
-		db = db.Where("normalized_id <> ?", excludeID)
+	if limit < 1 || limit > 10 || len(excluded) > 20 {
+		return nil, stats, errors.New("invalid candidates request")
 	}
-
+	rated := s.db.WithContext(ctx).Model(&UserFeedback{}).Select("normalized_id").Where("user_id = ?", userID)
+	query := s.db.WithContext(ctx).Model(&catalog.Movie{}).Where("is_hidden = ?", false).Where("normalized_id NOT IN (?)", rated)
+	if len(excluded) > 0 {
+		query = query.Where("normalized_id NOT IN ?", excluded)
+	}
 	var count int64
-	if err := db.Count(&count).Error; err != nil {
+	if err := query.Count(&count).Error; err != nil {
 		return nil, stats, err
 	}
 	if count == 0 {
-		return nil, stats, nil
+		return []catalog.Movie{}, stats, nil
 	}
-
-	// 随机选取 offset
-	offset := 0
-	if count > 1 {
-		offset = rand.Intn(int(count))
-	}
-
-	var candidates []catalog.Movie
-	if err := db.Offset(offset).Limit(5).Find(&candidates).Error; err != nil {
+	offset := rand.Intn(int(count))
+	var movies []catalog.Movie
+	if err := query.Session(&gorm.Session{}).Order("id ASC").Offset(offset).Limit(limit).Find(&movies).Error; err != nil {
 		return nil, stats, err
 	}
-	if len(candidates) == 0 {
-		// 回退从第一页获取
-		if err := db.Offset(0).Limit(5).Find(&candidates).Error; err != nil {
+	if len(movies) < limit && offset > 0 {
+		var rest []catalog.Movie
+		if err := query.Session(&gorm.Session{}).Order("id ASC").Offset(0).Limit(min(limit-len(movies), offset)).Find(&rest).Error; err != nil {
 			return nil, stats, err
 		}
+		movies = append(movies, rest...)
 	}
-	if len(candidates) == 0 {
-		return nil, stats, nil
-	}
-
-	// 组装影片封面与来源版本数据
-	movies := []catalog.Movie{candidates[0]}
 	if err := s.catalogRepo.Populate(ctx, movies, false); err != nil {
 		return nil, stats, err
 	}
+	return movies, stats, nil
+}
 
-	return &movies[0], stats, nil
+// FilterUnrated 按候选原顺序排除已标注或已隐藏的影片。
+func (s *Service) FilterUnrated(ctx context.Context, userID string, ids []string) ([]string, error) {
+	if len(ids) > 10 {
+		return nil, errors.New("too many candidates")
+	}
+	if len(ids) == 0 {
+		return []string{}, nil
+	}
+	var movies []catalog.Movie
+	if err := s.db.WithContext(ctx).Where("normalized_id IN ? AND is_hidden = ?", ids, false).Find(&movies).Error; err != nil {
+		return nil, err
+	}
+	var feedback []UserFeedback
+	if err := s.db.WithContext(ctx).Where("user_id = ? AND normalized_id IN ?", userID, ids).Find(&feedback).Error; err != nil {
+		return nil, err
+	}
+	available := make(map[string]bool, len(movies))
+	for _, movie := range movies {
+		available[movie.NormalizedID] = true
+	}
+	for _, item := range feedback {
+		delete(available, item.NormalizedID)
+	}
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if available[id] {
+			result = append(result, id)
+			delete(available, id)
+		}
+	}
+	return result, nil
 }
 
 // movieFeatures 影片提取的推荐特征
@@ -497,7 +527,10 @@ func (s *Service) SaveFeedback(ctx context.Context, userID string, input Feedbac
 	}
 
 	// 获取下一部推荐标注候选影片
-	nextMovie, _, _ := s.GetNextAnnotation(ctx, userID, id)
+	var nextMovie *catalog.Movie
+	if !input.Prefetched {
+		nextMovie, _, _ = s.GetNextAnnotation(ctx, userID, id)
+	}
 
 	return updatedStats, nextMovie, nil
 }
