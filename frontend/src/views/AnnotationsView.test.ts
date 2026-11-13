@@ -109,6 +109,7 @@ describe('AnnotationsView', () => {
       expect(body.normalized_id).toBe('TEST-101')
       expect(body.action).toBe('like')
     })
+    wrapper.unmount()
   })
 
   it('allows skipping to the next movie', async () => {
@@ -132,6 +133,21 @@ describe('AnnotationsView', () => {
       const nextCall = calls.find((c: any) => c[0].includes('/annotations/next?exclude=TEST-101'))
       expect(nextCall).toBeDefined()
     })
+    wrapper.unmount()
+  })
+
+  it('操作按钮时空格不会跳过影片，页面空白处仍可使用快捷键', async () => {
+    const wrapper = mount(AnnotationsView, { global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('TEST-101'))
+    const button = document.createElement('button')
+    document.body.appendChild(button)
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }))
+    const calls = (globalThis.fetch as any).mock.calls
+    expect(calls.filter((call: any) => call[0].includes('/annotations/next'))).toHaveLength(1)
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(calls.filter((call: any) => call[0].includes('/annotations/next'))).toHaveLength(2))
+    button.remove()
+    wrapper.unmount()
   })
 
   it('使用后台候选切换且不展示服务端判定失效的影片', async () => {

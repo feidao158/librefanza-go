@@ -155,7 +155,6 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
   <div class="content-wrap admin-wrap">
     <div class="page-title-row">
       <div>
-        <div class="section-kicker"><ShieldCheck :size="12" /> LIBREFANZA / ADMINISTRATION</div>
         <h1>{{ $t('admin.title') }}</h1>
       </div>
     </div>
@@ -276,23 +275,23 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
               </thead>
               <tbody>
                 <tr v-for="job in jobs" :key="job.id">
-                  <td class="font-mono text-xs">{{ job.id.slice(0, 8) }}</td>
-                  <td>
-                    <span class="font-medium text-slate-800">{{ $te(`jobs.types.${job.type}`) ? $t(`jobs.types.${job.type}`) : job.type }}</span>
-                    <div v-for="failure in job.metadata_failures || []" :key="failure.source" class="table-subtitle text-rose-600 font-medium">
+                  <td class="font-mono text-xs" data-label="ID">{{ job.id.slice(0, 8) }}</td>
+                  <td :data-label="$t('common.type')">
+                    <span class="font-medium text-base-content">{{ $te(`jobs.types.${job.type}`) ? $t(`jobs.types.${job.type}`) : job.type }}</span>
+                    <div v-for="failure in job.metadata_failures || []" :key="failure.source" class="table-subtitle text-error font-medium">
                       {{ failure.source.toUpperCase() }}: {{ $te(`logs.reasons.${failure.reason}`) ? $t(`logs.reasons.${failure.reason}`) : $t('logs.reasons.unknown') }}<template v-if="failure.http_status"> HTTP {{ failure.http_status }}</template>
                     </div>
                   </td>
-                  <td>
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold" :class="job.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : job.status === 'failed' ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-amber-50 text-amber-700 border border-amber-200'">
+                  <td :data-label="$t('common.status')">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold" :class="job.status === 'completed' ? 'bg-success/15 text-success border border-success/30' : job.status === 'failed' ? 'bg-error/15 text-error border border-error/30' : 'bg-warning/15 text-warning border border-warning/30'">
                       {{ $te(`jobs.statuses.${job.status}`) ? $t(`jobs.statuses.${job.status}`) : job.status }}
                     </span>
                   </td>
-                  <td class="font-mono text-xs text-slate-500">{{ job.created_at.slice(0, 19).replace('T', ' ') }}</td>
-                  <td>
+                  <td class="font-mono text-xs text-base-content/70" :data-label="$t('common.created')">{{ job.created_at.slice(0, 19).replace('T', ' ') }}</td>
+                  <td :data-label="$t('common.actions')">
                     <div class="table-actions">
                       <RouterLink class="btn btn-ghost btn-square btn-xs" :to="{ path: '/admin/logs', query: { task_id: job.id } }" :title="$t('logActions.viewJob')" :aria-label="$t('logActions.viewJob')"><FileText :size="15" /></RouterLink>
-                      <button v-if="job.status === 'failed'" class="btn btn-ghost btn-square btn-xs text-amber-600" :title="$t('common.retry')" @click="retryJob(job)"><RefreshCw :size="15" /></button>
+                      <button v-if="job.status === 'failed'" class="btn btn-ghost btn-square btn-xs text-warning" :title="$t('common.retry')" @click="retryJob(job)"><RefreshCw :size="15" /></button>
                     </div>
                   </td>
                 </tr>
@@ -326,13 +325,13 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
               </thead>
               <tbody>
                 <tr v-for="item in section === 'items' ? items : []" :key="`item-${item.id}`">
-                  <td class="font-mono text-xs">{{ item.id }}</td>
-                  <td><span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 tracking-wider font-mono">{{ item.source.toUpperCase() }}</span></td>
-                  <td>
+                  <td class="font-mono text-xs" data-label="ID">{{ item.id }}</td>
+                  <td :data-label="$t('common.source')"><span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-base-200 text-base-content/85 tracking-wider font-mono">{{ item.source.toUpperCase() }}</span></td>
+                  <td :data-label="$t('movies.title')">
                     <RouterLink :to="`/movies/${item.normalized_id}`" class="text-link font-mono font-bold">{{ item.normalized_id }}</RouterLink>
                     <div class="table-subtitle">{{ item.title }}</div>
                   </td>
-                  <td>
+                  <td :data-label="$t('common.actions')">
                     <div class="table-actions">
                       <template v-if="item.source === 'fanza'">
                         <button class="btn btn-ghost btn-xs font-bold" title="-1" @click="updatePriority(item, -1)">−</button>
@@ -344,11 +343,11 @@ watch([section, () => route.query.kind, () => route.query.status], () => { page.
                   </td>
                 </tr>
                 <tr v-for="entry in section === 'pages' ? pages : []" :key="`page-${entry.id}`">
-                  <td class="font-mono text-xs">{{ entry.id }}</td>
-                  <td><span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 tracking-wider font-mono">{{ entry.source.toUpperCase() }}</span></td>
-                  <td class="break-text font-mono text-xs text-slate-600">{{ entry.url }}</td>
-                  <td>
-                    <button class="btn btn-ghost btn-square btn-xs text-slate-600 hover:text-emerald-600" :title="$t('common.view')" @click="viewPage(entry.id)"><FileCode2 :size="16" /></button>
+                  <td class="font-mono text-xs" data-label="ID">{{ entry.id }}</td>
+                  <td :data-label="$t('common.source')"><span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-base-200 text-base-content/85 tracking-wider font-mono">{{ entry.source.toUpperCase() }}</span></td>
+                  <td class="break-text font-mono text-xs text-base-content/75" :data-label="$t('admin.url')">{{ entry.url }}</td>
+                  <td :data-label="$t('common.actions')">
+                    <button class="btn btn-ghost btn-square btn-xs text-base-content/75 hover:text-primary" :title="$t('common.view')" @click="viewPage(entry.id)"><FileCode2 :size="16" /></button>
                   </td>
                 </tr>
               </tbody>

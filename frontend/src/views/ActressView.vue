@@ -49,8 +49,8 @@ watch(() => route.fullPath, load, { immediate: true })
   <div class="content-wrap detail-wrap">
     <RouterLink to="/actresses" class="back-link"><ArrowLeft :size="16" />{{ $t('nav.actresses') }}</RouterLink>
     <div v-if="loading" class="center-state">
-      <span class="loading loading-spinner loading-md text-emerald-600"></span>
-      <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
+      <span class="loading loading-spinner loading-md text-primary"></span>
+      <span class="text-xs text-base-content/65 font-medium">{{ $t('common.loading') }}</span>
     </div>
     <div v-else-if="error" class="center-state">
       <p class="error-text font-medium">{{ $t('common.error') }}</p>
@@ -63,14 +63,12 @@ watch(() => route.fullPath, load, { immediate: true })
           <UserRound v-else :size="38" />
         </div>
         <div>
-          <div class="section-kicker"><Users :size="12" /> LIBREFANZA / PEOPLE</div>
           <h1>{{ actress.name }}</h1>
           <span v-if="actress.fanza_id" class="muted font-mono">FANZA #{{ actress.fanza_id }}</span>
         </div>
       </div>
       <div class="section-heading">
         <div>
-          <span class="section-number">01</span>
           <h2>{{ $t('actresses.works') }}</h2>
         </div>
         <div class="segmented">
@@ -82,7 +80,7 @@ watch(() => route.fullPath, load, { immediate: true })
         <MovieCard v-for="movie in movies" :key="movie.id" :movie="movie" />
       </div>
       <div v-else class="center-state">
-        <p class="text-slate-500 font-medium">{{ $t('common.noResults') }}</p>
+        <p class="text-base-content/70 font-medium">{{ $t('common.noResults') }}</p>
       </div>
       <Pagination :page="page" :size="30" :total="total" @change="changePage" />
     </template>

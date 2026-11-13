@@ -30,7 +30,6 @@ async function submit() {
 <template>
   <div class="auth-wrap">
     <div class="mb-4">
-      <div class="section-kicker"><ShieldCheck :size="12" /> LIBREFANZA / ACCOUNT</div>
       <h1>{{ $t(register ? 'auth.register' : 'auth.login') }}</h1>
     </div>
     <form class="auth-form" @submit.prevent="submit">

@@ -46,7 +46,7 @@ async function finish() {
 <template>
   <div class="setup-shell">
     <div class="setup-brand"><span class="brand-icon">lf</span><span>LibreFanza</span></div>
-    <div class="setup-heading"><div class="section-kicker">SETUP / {{ String(step).padStart(2, '0') }}</div><h1>{{ $t('setup.title') }}</h1></div>
+    <div class="setup-heading"><h1>{{ $t('setup.title') }}</h1></div>
     <div v-if="!managed" class="setup-steps"><div :class="{ active: step === 1, done: step > 1 }"><Database :size="17" /><span>{{ $t('setup.database') }}</span></div><div :class="{ active: step === 2, done: step > 2 }"><Server :size="17" /><span>{{ $t('setup.redis') }}</span></div><div :class="{ active: step === 3 }"><ShieldCheck :size="17" /><span>{{ $t('setup.admin') }}</span></div></div>
     <div v-if="checkingSetup" class="center-state">{{ $t('common.loading') }}</div>
     <form v-else-if="step === 1" class="setup-form" @submit.prevent="step = 2; error = false; checked = ''">

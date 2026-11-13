@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Clock, ExternalLink, HelpCircle, Layers, Sparkles, Star, ThumbsDown, ThumbsUp, ZoomIn } from 'lucide-vue-next'
+import { ArrowRight, Clock, ExternalLink, Layers, Sparkles, Star, ThumbsDown, ThumbsUp, ZoomIn } from 'lucide-vue-next'
 import { ApiError, api, jsonBody } from '../api/client'
 import type { AnnotationStats, FeedbackResponse, Movie, RecommendationResponse } from '../types'
 import ImageLightbox, { type LightboxItem } from '../components/ImageLightbox.vue'
 import SmoothImage from '../components/SmoothImage.vue'
 import MoviePlayer from '../components/MoviePlayer.vue'
+import FeedbackActions from '../components/FeedbackActions.vue'
 import { MoviePreload } from '../components/moviePreload'
+import { isInteractiveShortcutTarget } from '../components/keyboardShortcuts'
 
 const { t } = useI18n()
 
@@ -55,12 +57,12 @@ const galleryImages = computed<LightboxItem[]>(() => {
   const list: LightboxItem[] = []
   const coverUrl = currentMovie.value.preferred_item?.cover_image_url || currentMovie.value.cover_image_url
   if (coverUrl) {
-    list.push({ url: coverUrl, title: `${currentMovie.value.normalized_id} - 封面` })
+    list.push({ url: coverUrl, title: `${currentMovie.value.normalized_id} - ${t('movies.imageCover')}` })
   }
   for (let i = 0; i < sampleImages.value.length; i++) {
     list.push({
       url: sampleImages.value[i],
-      title: `${currentMovie.value.normalized_id} - 预览图 ${i + 1}`,
+      title: `${currentMovie.value.normalized_id} - ${t('movies.sampleImage', { number: i + 1 })}`,
     })
   }
   return list
@@ -143,10 +145,7 @@ async function submitFeedback(action: 'like' | 'dislike' | 'uncertain') {
 // 键盘快捷键监听
 function handleKeyDown(event: KeyboardEvent) {
   if (lightboxOpen.value) return
-  const target = event.target as HTMLElement
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
-    return
-  }
+  if (isInteractiveShortcutTarget(event)) return
 
   if (event.code === 'Digit1' || event.key === '1') {
     event.preventDefault()
@@ -356,8 +355,8 @@ onBeforeUnmount(() => {
                     <span v-if="currentMovie.preferred_item?.metadata?.volume_minutes" class="flex items-center gap-1 text-base-content/70">
                       <Clock :size="12" /> {{ currentMovie.preferred_item.metadata.volume_minutes }} {{ t('movies.minutes') }}
                     </span>
-                    <span v-if="currentMovie.preferred_item?.metadata?.rating != null" class="flex items-center gap-1 text-amber-600 font-bold">
-                      <Star :size="12" class="fill-amber-400 text-amber-500" /> {{ currentMovie.preferred_item.metadata.rating }}
+                    <span v-if="currentMovie.preferred_item?.metadata?.rating != null" class="flex items-center gap-1 text-warning font-bold">
+                      <Star :size="12" class="fill-amber-400 text-warning" /> {{ currentMovie.preferred_item.metadata.rating }}
                     </span>
                   </div>
 
@@ -431,7 +430,7 @@ onBeforeUnmount(() => {
                         v-for="(sampleUrl, idx) in sampleImages"
                         :key="sampleUrl"
                         class="relative aspect-[1.48] rounded overflow-hidden cursor-pointer group bg-base-300 hover:ring-2 hover:ring-primary transition-all"
-                        :title="`预览图 ${idx + 1}`"
+                        :title="t('movies.sampleImage', { number: idx + 1 })"
                         @click="openSampleLightbox(idx)"
                       >
                         <SmoothImage
@@ -454,43 +453,7 @@ onBeforeUnmount(() => {
 
               <!-- 3个选项操作栏与切换按键 -->
               <div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-base-200">
-                <div class="grid grid-cols-3 gap-2 sm:gap-3">
-                  <!-- 喜欢 -->
-                  <button
-                    class="btn btn-success text-white shadow font-bold text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
-                    :disabled="submitting || loading || feedbackSaved"
-                    @click="submitFeedback('like')"
-                  >
-                    <span v-if="submitting && lastAction === 'like'" class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                    <ThumbsUp v-else :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
-                    <span class="truncate">{{ t('annotations.like') }}</span>
-                    <kbd class="hidden sm:inline-flex kbd kbd-sm bg-success-content/20 text-white ml-1">1</kbd>
-                  </button>
-
-                  <!-- 不确定 -->
-                  <button
-                    class="btn btn-outline border-base-content/30 text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
-                    :disabled="submitting || loading || feedbackSaved"
-                    @click="submitFeedback('uncertain')"
-                  >
-                    <span v-if="submitting && lastAction === 'uncertain'" class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                    <HelpCircle v-else :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
-                    <span class="truncate">{{ t('annotations.uncertain') }}</span>
-                    <kbd class="hidden sm:inline-flex kbd kbd-sm bg-base-300 ml-1">2</kbd>
-                  </button>
-
-                  <!-- 不喜欢 -->
-                  <button
-                    class="btn btn-error text-white shadow font-bold text-sm sm:text-base h-12 sm:h-14 px-1 sm:px-4 active:scale-95 transition-transform"
-                    :disabled="submitting || loading || feedbackSaved"
-                    @click="submitFeedback('dislike')"
-                  >
-                    <span v-if="submitting && lastAction === 'dislike'" class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                    <ThumbsDown v-else :size="18" class="sm:w-5 sm:h-5 flex-shrink-0" />
-                    <span class="truncate">{{ t('annotations.dislike') }}</span>
-                    <kbd class="hidden sm:inline-flex kbd kbd-sm bg-error-content/20 text-white ml-1">3</kbd>
-                  </button>
-                </div>
+                <FeedbackActions :disabled="submitting || loading || feedbackSaved" :pending-action="submitting ? lastAction : null" @select="submitFeedback" />
 
               </div>
             </div>

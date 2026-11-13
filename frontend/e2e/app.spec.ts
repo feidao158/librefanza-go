@@ -58,13 +58,18 @@ test('安装向导提交 PostgreSQL、可选 Redis 和管理员配置', async ({
   await expect(page.getByRole('heading', { name: '影片' })).toBeVisible()
 })
 
-test('影片列表可切换英文并展示来源数据', async ({ page }) => {
+test('影片列表可切换英文并展示来源数据', async ({ page, isMobile }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
   await page.route('**/api/v1/movies?*', route => route.fulfill({ json: { data: [{ id: 1, normalized_id: 'ABC-123', compressed_id: 'ABC-123', is_hidden: false, created_at: '', updated_at: '', preferred_item: { id: 1, source: 'fanza', title: '示例标题', thumbnail_image_url: '', cover_image_url: '' } }], meta: { page: 1, page_size: 30, total: 1 } } }))
   await page.goto('/movies')
   await expect(page.getByText('ABC-123')).toBeVisible()
   await expect(page.getByText('示例标题')).toBeVisible()
-  await page.getByLabel('Language').selectOption('en')
+  if (isMobile) {
+    await page.getByRole('navigation', { name: '手机导航' }).getByRole('button', { name: '更多' }).click()
+    await page.getByRole('dialog', { name: '更多' }).getByLabel('语言').selectOption('en')
+  } else {
+    await page.locator('.header-actions').getByLabel('语言').selectOption('en')
+  }
   await expect(page.getByRole('heading', { name: 'Movies' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 })
@@ -113,18 +118,25 @@ test('搜索未收录番号时自动提交检索任务', async ({ page }) => {
   await expect.poll(() => lookups).toBe(2)
 })
 
-test('用户可以注册并登录', async ({ page }) => {
+test('用户可以注册并登录', async ({ page, isMobile }) => {
   await page.route('**/api/v1/setup', route => route.fulfill({ json: { data: { installed: true } } }))
   let registered = false
   await page.route('**/api/v1/users', route => { registered = true; return route.fulfill({ status: 201, json: { data: {} } }) })
   await page.route('**/api/v1/auth/sessions', route => route.fulfill({ json: { data: { access_token: 'test-token', user: { id: 1, email: 'user@example.com', is_admin: false } } } }))
+  await page.route('**/api/v1/auth/me', route => route.fulfill({ json: { data: { id: 1, email: 'user@example.com', is_admin: false } } }))
   await page.route('**/api/v1/movies?*', route => route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } }))
   await page.goto('/register')
   await page.getByLabel('电子邮箱').fill('user@example.com')
   await page.getByLabel('密码').fill('password123')
   await page.getByRole('button', { name: '注册' }).click()
   await expect.poll(() => registered).toBe(true)
-  await expect(page.getByTitle('user@example.com')).toBeVisible()
+  await expect(page).toHaveURL('/')
+  if (isMobile) {
+    await page.getByRole('navigation', { name: '手机导航' }).getByRole('button', { name: '更多' }).click()
+    await expect(page.getByRole('dialog', { name: '更多' }).getByText('user@example.com')).toBeVisible()
+  } else {
+    await expect(page.getByTitle('user@example.com')).toBeVisible()
+  }
 })
 
 test('管理员可以调整 Redis、查看原始页面并重试任务', async ({ page }) => {

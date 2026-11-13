@@ -34,8 +34,8 @@ onMounted(load)
 </template>
 
 <style scoped>
-.dashboard-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; border-bottom: 1px solid #d6dce0; padding: 1rem 0; margin-bottom: 1.5rem; }
+.dashboard-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; border-bottom: 1px solid var(--cinema-border); padding: 1rem 0; margin-bottom: 1.5rem; }
 .dashboard-counts > * { display: flex; flex-direction: column; gap: .35rem; }
-.dashboard-counts span { color: #53616a; font-size: .85rem; }
+.dashboard-counts span { color: var(--cinema-muted); font-size: .85rem; }
 .dashboard-counts strong { font-size: 1.5rem; }
 </style>

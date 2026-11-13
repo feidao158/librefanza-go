@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowUpDown, Search, UserRound, Users } from 'lucide-vue-next'
+import { ArrowUpDown, Search, UserRound } from 'lucide-vue-next'
 import { api } from '../api/client'
 import Pagination from '../components/Pagination.vue'
 import type { Actress } from '../types'
@@ -36,14 +36,13 @@ watch(() => route.fullPath, load, { immediate: true })
 </script>
 
 <template>
-  <div class="content-wrap">
+  <div class="content-wrap catalog-page">
     <div class="page-title-row">
       <div>
-        <div class="section-kicker"><Users :size="12" /> LIBREFANZA / PEOPLE</div>
         <h1>{{ $t('actresses.title') }}</h1>
         <p>{{ $t('actresses.subtitle') }}</p>
       </div>
-      <span class="count-label">{{ total.toLocaleString() }} <span>PEOPLE</span></span>
+      <span class="count-label">{{ $t('common.total', { count: total.toLocaleString() }) }}</span>
     </div>
     <form class="filter-bar" @submit.prevent="submit">
       <label class="search-control">
@@ -64,14 +63,13 @@ watch(() => route.fullPath, load, { immediate: true })
     </form>
     <div class="section-heading">
       <div>
-        <span class="section-number">02</span>
         <h2>{{ $t('actresses.title') }}</h2>
       </div>
       <span class="result-count">{{ $t('common.total', { count: total }) }}</span>
     </div>
     <div v-if="loading" class="center-state">
-      <span class="loading loading-spinner loading-md text-emerald-600"></span>
-      <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
+      <span class="loading loading-spinner loading-md text-primary"></span>
+      <span class="text-xs text-base-content/65 font-medium">{{ $t('common.loading') }}</span>
     </div>
     <div v-else-if="error" class="center-state">
       <p class="error-text font-medium">{{ $t('common.error') }}</p>
@@ -88,8 +86,8 @@ watch(() => route.fullPath, load, { immediate: true })
       </RouterLink>
     </div>
     <div v-else class="center-state">
-      <UserRound :size="32" class="text-slate-300" />
-      <p class="font-medium text-slate-600">{{ $t('common.noResults') }}</p>
+      <UserRound :size="32" class="text-base-content/55" />
+      <p class="font-medium text-base-content/75">{{ $t('common.noResults') }}</p>
     </div>
     <Pagination :page="page" :size="45" :total="total" @change="changePage" />
   </div>

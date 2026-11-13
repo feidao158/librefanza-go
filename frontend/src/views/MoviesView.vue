@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowUpDown, Film, Search, SlidersHorizontal } from 'lucide-vue-next'
+import { ArrowUpDown, Search, SlidersHorizontal } from 'lucide-vue-next'
 import { api } from '../api/client'
 import MovieCard from '../components/MovieCard.vue'
 import Pagination from '../components/Pagination.vue'
@@ -52,14 +52,13 @@ watch(() => route.fullPath, load, { immediate: true })
 </script>
 
 <template>
-  <div class="content-wrap">
+  <div class="content-wrap catalog-page">
     <div class="page-title-row">
       <div>
-        <div class="section-kicker"><Film :size="12" /> LIBREFANZA / COLLECTION</div>
         <h1>{{ $t('movies.title') }}</h1>
         <p>{{ $t('movies.subtitle') }}</p>
       </div>
-      <span class="count-label">{{ total.toLocaleString() }} <span>INDEXED</span></span>
+      <span class="count-label">{{ $t('common.total', { count: total.toLocaleString() }) }}</span>
     </div>
     <form class="filter-bar" @submit.prevent="submit">
       <label class="search-control">
@@ -88,15 +87,14 @@ watch(() => route.fullPath, load, { immediate: true })
     </form>
     <div class="section-heading">
       <div>
-        <span class="section-number">01</span>
         <h2>{{ query ? $t('common.search') : $t('movies.latest') }}</h2>
         <span v-if="query" class="query-chip">{{ query }}</span>
       </div>
       <span class="result-count">{{ $t('common.total', { count: total }) }}</span>
     </div>
     <div v-if="loading" class="center-state">
-      <span class="loading loading-spinner loading-md text-emerald-600"></span>
-      <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
+      <span class="loading loading-spinner loading-md text-primary"></span>
+      <span class="text-xs text-base-content/65 font-medium">{{ $t('common.loading') }}</span>
     </div>
     <div v-else-if="error" class="center-state">
       <p class="error-text font-medium">{{ $t('common.error') }}</p>
@@ -106,8 +104,8 @@ watch(() => route.fullPath, load, { immediate: true })
       <MovieCard v-for="movie in movies" :key="movie.id" :movie="movie" />
     </div>
     <div v-else class="center-state">
-      <Search :size="32" class="text-slate-300" />
-      <p class="font-medium text-slate-600">{{ $t('common.noResults') }}</p>
+      <Search :size="32" class="text-base-content/55" />
+      <p class="font-medium text-base-content/75">{{ $t('common.noResults') }}</p>
       <RouterLink v-if="query" class="btn btn-outline btn-sm" :to="`/movies/${encodeURIComponent(query)}`">
         {{ $t('movies.searchSources') }}
       </RouterLink>

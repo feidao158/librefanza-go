@@ -23,7 +23,7 @@ test('管理页面展示内置推荐服务状态', async ({ page }) => {
   await expect(page.getByText('内置服务')).toBeVisible()
   await expect(page.getByText('服务已连接')).toBeVisible()
   await expect(page.getByText('历史同步完成')).toBeVisible()
-  await expect(page.getByText('同步异常，本地推荐生效')).toBeVisible()
+  await expect(page.getByText('同步异常，请稍后重试')).toBeVisible()
   await expect(page.getByText('影片游标: 123')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 })

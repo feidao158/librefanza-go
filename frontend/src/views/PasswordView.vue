@@ -24,10 +24,9 @@ async function submit() {
 <template>
   <div class="auth-wrap">
     <div class="mb-4">
-      <div class="section-kicker"><ShieldCheck :size="12" /> LIBREFANZA / ACCOUNT</div>
       <h1>{{ $t(resetting ? 'auth.reset' : 'auth.forgot') }}</h1>
     </div>
-    <div v-if="done" class="p-6 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+    <div v-if="done" class="p-6 bg-base-200 rounded-2xl border border-base-300 shadow-xs">
       <p class="success-text font-semibold">{{ $t(resetting ? 'auth.resetDone' : 'auth.resetSent') }}</p>
     </div>
     <form v-else class="auth-form" @submit.prevent="submit">

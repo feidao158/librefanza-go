@@ -1,4 +1,14 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+
+async function expectAccount(page: Page, isMobile: boolean, email: string) {
+  if (isMobile) {
+    await page.getByRole('navigation', { name: '手机导航' }).getByRole('button', { name: '更多' }).click()
+    await expect(page.getByRole('dialog', { name: '更多' }).getByText(email, { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+  } else {
+    await expect(page.getByTitle(email)).toBeVisible()
+  }
+}
 
 test('来源补全延期时显示待恢复的来源数量', async ({ page }) => {
   await page.route('**/api/v1/**', async route => {
@@ -12,7 +22,7 @@ test('来源补全延期时显示待恢复的来源数量', async ({ page }) => 
   await expect(page.getByText('部分来源将在恢复后继续采集：3')).toBeVisible()
 })
 
-test('连续刷新保留令牌并汇总不同来源的详情与图片', async ({ page }) => {
+test('连续刷新保留令牌并汇总不同来源的详情与图片', async ({ page, isMobile }) => {
   await page.addInitScript(() => window.localStorage.setItem('librefanza-access-token', 'persistent-token'))
   const fanza = { id: 1, source: 'fanza', title: 'Fanza title', normalized_id: 'ABC-123', cover_image_url: '', metadata: { genres: ['剧情'], sample_image_urls: ['https://example.com/a.jpg'] } }
   const sod = { id: 2, source: 'sod', title: 'SOD title', normalized_id: 'ABC-123', cover_image_url: '', metadata: { genres: ['其他'], sample_image_urls: ['https://example.com/b.jpg'] } }
@@ -30,7 +40,7 @@ test('连续刷新保留令牌并汇总不同来源的详情与图片', async ({
   await page.goto('/movies/ABC-123')
   for (let i = 0; i < 3; i++) {
     await page.reload()
-    await expect(page.getByTitle('admin@example.com')).toBeVisible()
+    await expectAccount(page, isMobile, 'admin@example.com')
   }
   await expect(page.getByText('剧情', { exact: false }).first()).toBeVisible()
   await expect(page.getByText('其他', { exact: false }).first()).toBeVisible()
@@ -41,7 +51,7 @@ test('连续刷新保留令牌并汇总不同来源的详情与图片', async ({
   await expect(page.locator('.sample-grid figure')).toHaveCount(1)
 })
 
-test('不同标签页同步登录退出且被动轮询不续期', async ({ context, page }) => {
+test('不同标签页同步登录退出且被动轮询不续期', async ({ context, page, isMobile }) => {
   let renewals = 0
   await context.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -57,17 +67,23 @@ test('不同标签页同步登录退出且被动轮询不续期', async ({ conte
   await page.getByLabel('电子邮箱').fill('user@example.com')
   await page.getByLabel('密码').fill('password123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await expect(second.getByTitle('user@example.com')).toBeVisible()
+  await expectAccount(second, isMobile, 'user@example.com')
   const beforeIdle = renewals
   await second.waitForTimeout(800)
   expect(renewals).toBe(beforeIdle)
-  await page.getByTitle('user@example.com').click()
+  if (isMobile) await page.getByRole('navigation', { name: '手机导航' }).getByRole('button', { name: '更多' }).click()
+  else await page.getByTitle('user@example.com').click()
   await page.getByRole('button', { name: '退出登录' }).click()
-  await expect(second.getByRole('link', { name: '登录' })).toBeVisible()
+  if (isMobile) {
+    await second.getByRole('navigation', { name: '手机导航' }).getByRole('button', { name: '更多' }).click()
+    await expect(second.getByRole('dialog', { name: '更多' }).getByRole('link', { name: '登录' })).toBeVisible()
+  } else {
+    await expect(second.getByRole('link', { name: '登录' })).toBeVisible()
+  }
   await second.close()
 })
 
-test('暂时无法验证时仍显示已缓存的登录用户', async ({ page }) => {
+test('暂时无法验证时仍显示已缓存的登录用户', async ({ page, isMobile }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('librefanza-access-token', 'saved-token')
     window.localStorage.setItem('librefanza-user', JSON.stringify({ token: 'saved-token', user: { id: 1, email: 'saved@example.com', is_admin: false } }))
@@ -79,6 +95,6 @@ test('暂时无法验证时仍显示已缓存的登录用户', async ({ page }) 
     return route.fulfill({ json: { data: [], meta: { page: 1, page_size: 30, total: 0 } } })
   })
   await page.goto('/movies')
-  await expect(page.getByTitle('saved@example.com')).toBeVisible()
+  await expectAccount(page, isMobile, 'saved@example.com')
   expect(await page.evaluate(() => window.localStorage.getItem('librefanza-access-token'))).toBe('saved-token')
 })

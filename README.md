@@ -1,6 +1,6 @@
 # LibreFanza
 
-Go 后端提供版本化 REST API、初始化向导与数据库持久化任务；Vue 3 前端使用 TypeScript、Tailwind CSS 和 daisyUI。数据库仅支持 PostgreSQL 14+，Redis 仅作为可选缓存，不参与认证和任务队列。本版本不支持直接连接旧版 MySQL 数据库，也不提供自动迁移。
+Go 后端提供版本化 REST API、初始化向导与数据库持久化任务；Vue 3 前端使用 TypeScript、Tailwind CSS 和 daisyUI，适配桌面和手机浏览器。数据库仅支持 PostgreSQL 14+，Redis 仅作为可选缓存，不参与认证和任务队列。本版本不支持直接连接旧版 MySQL 数据库，也不提供自动迁移。
 
 ## 本地开发
 
@@ -108,6 +108,6 @@ npm run build
 LIBREFANZA_TEST_DB_DRIVER=postgres LIBREFANZA_TEST_DB_PORT=5432 go test -p 1 ./... -count=1
 ```
 
-集成测试使用的测试数据库连接参数见测试源码；设置 `LIBREFANZA_TEST_REDIS_PORT` 可额外运行 Redis 集成用例。浏览器测试需要已启动的新服务和 Playwright Chromium：`cd frontend && npm run test:e2e`。如使用本机 Chrome，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其路径。
+集成测试使用的测试数据库连接参数见测试源码；设置 `LIBREFANZA_TEST_REDIS_PORT` 可额外运行 Redis 集成用例。浏览器测试使用模拟接口，并默认构建前端后启动本机 4174 端口的临时预览服务：`cd frontend && npx playwright install chromium webkit && npm run test:e2e`。Linux 如缺少浏览器系统依赖，可执行 `npx playwright install-deps chromium webkit`。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定本机 Chrome，或通过 `PLAYWRIGHT_BASE_URL` 指定已启动的测试服务；不要将测试指向生产环境。
 
 不提供旧系统数据或账号迁移。源代码历史可通过 Git 查看。

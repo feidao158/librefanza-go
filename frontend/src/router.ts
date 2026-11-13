@@ -1,15 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import MoviesView from './views/MoviesView.vue'
-import MovieView from './views/MovieView.vue'
-import ActressesView from './views/ActressesView.vue'
-import ActressView from './views/ActressView.vue'
-import AuthView from './views/AuthView.vue'
-import SetupView from './views/SetupView.vue'
-import AdminView from './views/AdminView.vue'
-import PasswordView from './views/PasswordView.vue'
-import AnnotationsView from './views/AnnotationsView.vue'
-import RecommendationsView from './views/RecommendationsView.vue'
-import LikedView from './views/LikedView.vue'
+
+const MoviesView = () => import('./views/MoviesView.vue')
+const MovieView = () => import('./views/MovieView.vue')
+const ActressesView = () => import('./views/ActressesView.vue')
+const ActressView = () => import('./views/ActressView.vue')
+const AuthView = () => import('./views/AuthView.vue')
+const SetupView = () => import('./views/SetupView.vue')
+const AdminView = () => import('./views/AdminView.vue')
+const PasswordView = () => import('./views/PasswordView.vue')
+const AnnotationsView = () => import('./views/AnnotationsView.vue')
+const RecommendationsView = () => import('./views/RecommendationsView.vue')
+const LikedView = () => import('./views/LikedView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),

@@ -10,6 +10,23 @@ const mountView = () => mount(RecommendationsView, { global: { plugins: [i18n], 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('推荐连续标记', () => {
+  it('操作语言选择框时数字键不会记录反馈，页面空白处仍可使用快捷键', async () => {
+    const fetchMock = vi.fn(async (url: string) => url.includes('/feedback')
+      ? response({ stats })
+      : response({ ready: true, stats, movies: [{ normalized_id: 'REC-001' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountView()
+    await vi.waitFor(() => expect(wrapper.text()).toContain('REC-001'))
+    const select = document.createElement('select')
+    document.body.appendChild(select)
+    select.dispatchEvent(new KeyboardEvent('keydown', { key: '1', code: 'Digit1', bubbles: true, cancelable: true }))
+    expect(fetchMock.mock.calls.filter(([url]) => url.includes('/feedback'))).toHaveLength(0)
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '1', code: 'Digit1', bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url.includes('/feedback'))).toHaveLength(1))
+    select.remove()
+    wrapper.unmount()
+  })
+
   it('等待下一部期间保留当前卡片并阻止重复标记', async () => {
     let resolveNext!: (value: ReturnType<typeof response>) => void
     let requests = 0

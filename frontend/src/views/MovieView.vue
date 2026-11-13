@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Calendar, Check, Clock, Copy, ExternalLink, Film, Globe, Image as ImageIcon, Layers, RefreshCw, Search, Sparkles, Star, Tag, Users, ZoomIn } from 'lucide-vue-next'
 import { api, ApiError, jsonBody } from '../api/client'
@@ -13,6 +14,7 @@ interface Job { id: string; status: string; result?: { found: boolean; cached: b
 interface MetadataJob { id: string; status: string; completed_sources: number; failed_sources: number; deferred_sources?: number; total_sources: number; collection_status?: string }
 
 const route = useRoute()
+const { t } = useI18n()
 const auth = useAuthStore()
 const movie = ref<Movie | null>(null)
 const loading = ref(true)
@@ -56,13 +58,13 @@ const lightboxIndex = ref(0)
 const galleryImages = computed<LightboxItem[]>(() => {
   const list: LightboxItem[] = []
   if (displayCover.value) {
-    list.push({ url: displayCover.value, title: `${movie.value?.normalized_id || ''} - 封面` })
+    list.push({ url: displayCover.value, title: `${movie.value?.normalized_id || ''} - ${t('movies.imageCover')}` })
   }
   for (let i = 0; i < details.value.images.length; i++) {
     const img = details.value.images[i]
     list.push({
       url: img.url,
-      title: `${movie.value?.normalized_id || ''} - 预览图 ${i + 1} (${img.sources.join('/').toUpperCase()})`,
+      title: `${movie.value?.normalized_id || ''} - ${t('movies.sampleImage', { number: i + 1 })} (${img.sources.join('/').toUpperCase()})`,
     })
   }
   return list
@@ -168,8 +170,8 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
   <div class="content-wrap detail-wrap">
     <RouterLink :to="likesPage ? { path: '/likes', query: { page: likesPage } } : '/movies'" class="back-link"><ArrowLeft :size="16" />{{ $t(likesPage ? 'nav.likes' : 'nav.movies') }}</RouterLink>
     <div v-if="loading" class="center-state">
-      <span class="loading loading-spinner loading-md text-emerald-600"></span>
-      <span class="text-xs text-slate-400 font-medium">{{ $t('common.loading') }}</span>
+      <span class="loading loading-spinner loading-md text-primary"></span>
+      <span class="text-xs text-base-content/65 font-medium">{{ $t('common.loading') }}</span>
     </div>
     <div v-else-if="notFound" class="empty-detail">
       <span class="section-kicker">{{ id }}</span>
@@ -191,7 +193,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
           <h1>{{ movie.normalized_id }}</h1>
         </div>
         <button class="btn btn-outline btn-sm shadow-xs" :title="$t('movies.copy')" @click="copyID">
-          <Check v-if="copied" :size="15" class="text-emerald-600" />
+          <Check v-if="copied" :size="15" class="text-primary" />
           <Copy v-else :size="15" />
           {{ copied ? $t('movies.copied') : $t('movies.copy') }}
         </button>
@@ -199,7 +201,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
       <h2 class="detail-title">{{ activeItem.title }}</h2>
       <div class="detail-grid">
         <div class="detail-image cursor-pointer group relative" :title="displayCover ? '点击查看高清大图' : ''" @click="openCoverLightbox">
-          <span v-if="!imageLoaded" class="text-slate-400 text-sm font-medium">{{ $t(!imageFailed && displayCover ? 'movies.loadingCover' : 'movies.noCover') }}</span>
+          <span v-if="!imageLoaded" class="text-base-content/65 text-sm font-medium">{{ $t(!imageFailed && displayCover ? 'movies.loadingCover' : 'movies.noCover') }}</span>
           <img v-if="!imageFailed && displayCover" :class="{ 'image-pending': !imageLoaded }" :src="displayCover" :alt="movie.normalized_id" referrerpolicy="no-referrer" @load="imageLoaded = true" @error="imageFailed = true">
           <div v-if="!imageFailed && displayCover && imageLoaded" class="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
             <span class="badge badge-neutral bg-black/60 text-white gap-1 py-3 px-3 shadow"><ZoomIn :size="16" /> 点击看大图</span>
@@ -211,7 +213,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
             <dt>{{ $t('common.date') }}</dt>
             <dd>{{ displayDate?.slice(0, 10) || $t('common.unknown') }}</dd>
             <dt>{{ $t('common.source') }}</dt>
-            <dd><span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-slate-100 text-slate-800 tracking-wider font-mono">{{ activeItem.source.toUpperCase() }}</span></dd>
+            <dd><span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-base-200 text-base-content tracking-wider font-mono">{{ activeItem.source.toUpperCase() }}</span></dd>
             <template v-if="displayVolume">
               <dt>{{ $t('movies.duration') }}</dt>
               <dd>{{ displayVolume }} {{ $t('movies.minutes') }}</dd>
@@ -226,7 +228,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
             </template>
             <template v-if="displayRating != null">
               <dt>{{ $t('movies.rating') }}</dt>
-              <dd><span class="inline-flex items-center gap-1 text-amber-600 font-bold"><Star :size="13" class="fill-amber-400 text-amber-500" /> {{ displayRating }}</span></dd>
+              <dd><span class="inline-flex items-center gap-1 text-warning font-bold"><Star :size="13" class="fill-amber-400 text-warning" /> {{ displayRating }}</span></dd>
             </template>
             <template v-if="metadata.makers?.length">
               <dt>{{ $t('movies.makers') }}</dt>
@@ -279,7 +281,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (metadataTimer) clear
             <template v-if="details[field].length">
               <dt>{{ $t(`metadata.${field}`) }}</dt>
               <dd>
-                <span v-for="entry in details[field]" :key="entry.value" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs font-medium">
+                <span v-for="entry in details[field]" :key="entry.value" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-base-200 text-base-content text-xs font-medium">
                   {{ entry.value }} <small>{{ entry.sources.join(' / ').toUpperCase() }}</small>
                 </span>
               </dd>
